@@ -223,37 +223,31 @@ export class ConfluenceApi {
 	}
 
 	private async uploadMultipart(url: string, filename: string, data: ArrayBuffer, mimeType: string): Promise<RequestUrlResponse> {
-		// Use the same browser/Electron-trusted transport as the rest of the Confluence API.
-		// Direct Node https requests bypass the OS/browser certificate trust path and fail with
-		// corp CA validation issues for generated SVG/PNG attachments even though plain text page
-		// updates succeed. Multipart content remains binary and is sent via a Blob inside FormData.
-		const fd = new FormData();
-		fd.append('file', new Blob([data as BlobPart], { type: mimeType }), filename);
+		// Use Obsidian's privileged requestUrl transport for attachment uploads so the request stays on the
+		// Electron-trusted path instead of a browser fetch that triggers CORS. Build the multipart body
+		// manually to preserve the binary payload and avoid the corp-CA mismatch caused by direct Node https.
+		const boundary = `----obsidian-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+		const partHeader = [
+			`--${boundary}`,
+			`Content-Disposition: form-data; name="file"; filename="${filename.replace(/"/g, '\\"')}"`,
+			`Content-Type: ${mimeType}`,
+			'',
+			'',
+		].join('\r\n');
+		const tail = `\r\n--${boundary}--\r\n`;
+		const body = Buffer.concat([
+			Buffer.from(partHeader, 'utf8'),
+			Buffer.from(data),
+			Buffer.from(tail, 'utf8'),
+		]);
 
-		let response: Response;
-		try {
-			response = await fetch(url, {
-				method: 'POST',
-				headers: {
-					Authorization: this.authHeader,
-					Accept: 'application/json',
-					'X-Atlassian-Token': 'no-check',
-				},
-				body: fd,
-			});
-		} catch (e) {
-			const msg = e instanceof Error ? e.message : String(e);
-			throw new ConfluenceApiError(0, 'network', `Network request failed: ${msg}`);
-		}
-
-		const text = await response.text();
-		const status = response.status;
-		if (status >= 200 && status < 300) {
-			return { status, headers: {}, arrayBuffer: new ArrayBuffer(0), json: null as unknown, text } as RequestUrlResponse;
-		}
-		const code = classifyError(status);
-		const details = truncate(text, 500);
-		throw new ConfluenceApiError(status, code, buildErrorMessage('POST', url, status, details), details);
+		return this.request({
+			method: 'POST',
+			url,
+			body: body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+			contentType: `multipart/form-data; boundary=${boundary}`,
+			extraHeaders: { 'X-Atlassian-Token': 'no-check' },
+		});
 	}
 
 	private async request(opts: {
