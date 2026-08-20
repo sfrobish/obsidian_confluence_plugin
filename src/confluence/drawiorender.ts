@@ -16,7 +16,7 @@ export class OfflineDrawioRenderer {
 				const svg = await this.renderOne(b.source);
 				results.push({ block: b, svg });
 			} catch (e) {
-				const msg = e instanceof Error ? e.message : String(e);
+				const msg = e instanceof Error ? (e.stack ?? e.message) : String(e);
 				this.logger.warn(`Draw.io rendering failed; falling back to a code block: ${b.filename}`, msg);
 				results.push(null);
 			}
