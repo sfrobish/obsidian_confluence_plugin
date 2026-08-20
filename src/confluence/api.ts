@@ -1,4 +1,5 @@
 import { requestUrl, type RequestUrlParam, type RequestUrlResponse } from 'obsidian';
+import * as fs from 'fs';
 import * as https from 'https';
 import * as http from 'http';
 import { URL as NodeURL } from 'url';
@@ -223,9 +224,9 @@ export class ConfluenceApi {
 	}
 
 	private async uploadMultipart(url: string, filename: string, data: ArrayBuffer, mimeType: string): Promise<RequestUrlResponse> {
-		// Use Obsidian's privileged requestUrl transport for attachment uploads so the request stays on the
-		// Electron-trusted path instead of a browser fetch that triggers CORS. Build the multipart body
-		// manually to preserve the binary payload and avoid the corp-CA mismatch caused by direct Node https.
+		// Confluence Server rejects POSTs sent through Obsidian requestUrl with XSRF false positives.
+		// For attachment uploads, the trusted workaround is the Electron-backed Node https client,
+		// but it must include the corporate CA chain so the certificate verification succeeds.
 		const boundary = `----obsidian-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 		const partHeader = [
 			`--${boundary}`,
@@ -241,13 +242,25 @@ export class ConfluenceApi {
 			Buffer.from(tail, 'utf8'),
 		]);
 
-		return this.request({
-			method: 'POST',
+		const { status, text } = await nodeHttpsRequest({
 			url,
-			body: body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
-			contentType: `multipart/form-data; boundary=${boundary}`,
-			extraHeaders: { 'X-Atlassian-Token': 'no-check' },
+			method: 'POST',
+			headers: {
+				Authorization: this.authHeader,
+				Accept: 'application/json',
+				'X-Atlassian-Token': 'no-check',
+				'Content-Type': `multipart/form-data; boundary=${boundary}`,
+				'Content-Length': String(body.length),
+			},
+			body,
 		});
+
+		if (status >= 200 && status < 300) {
+			return { status, headers: {}, arrayBuffer: new ArrayBuffer(0), json: null as unknown, text } as RequestUrlResponse;
+		}
+		const code = classifyError(status);
+		const details = truncate(text, 500);
+		throw new ConfluenceApiError(status, code, buildErrorMessage('POST', url, status, details), details);
 	}
 
 	private async request(opts: {
@@ -325,6 +338,7 @@ function nodeHttpsRequest(opts: {
 	return new Promise((resolve, reject) => {
 		const parsed = new NodeURL(opts.url);
 		const lib = parsed.protocol === 'http:' ? http : https;
+		const ca = readCustomCaBundle();
 		const req = lib.request({
 			protocol: parsed.protocol,
 			hostname: parsed.hostname,
@@ -332,6 +346,7 @@ function nodeHttpsRequest(opts: {
 			path: parsed.pathname + parsed.search,
 			method: opts.method,
 			headers: opts.headers,
+			...(ca ? { ca } : {}),
 		}, (res) => {
 			const chunks: Buffer[] = [];
 			res.on('data', (c: Buffer) => chunks.push(c));
@@ -344,6 +359,16 @@ function nodeHttpsRequest(opts: {
 		req.write(opts.body);
 		req.end();
 	});
+}
+
+function readCustomCaBundle(): Buffer | undefined {
+	const envPath = process.env.NODE_EXTRA_CA_CERTS ?? process.env.CONFLUENCE_CA_FILE ?? process.env.CONFLUENCE_CA_PATH;
+	if (!envPath) return undefined;
+	try {
+		return fs.readFileSync(envPath);
+	} catch {
+		return undefined;
+	}
 }
 
 /** UTF-8-safe Base64 encoding; Obsidian desktop runs in Electron, where btoa is available in the browser side but only accepts latin1. */

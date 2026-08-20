@@ -1,6 +1,21 @@
-import '../../assets/viewer-static.min.cjs';
+import { createRequire } from 'node:module';
 import { DiagramBlock } from './markdownConverter';
 import { Logger } from '../utils/logger';
+
+const requireFromModule = createRequire(import.meta.url);
+
+function ensureOfflineViewerLoaded(): void {
+	if (typeof window === 'undefined') return;
+	if ((window as any).GraphViewer && (window as any).mxUtils) return;
+	try {
+		requireFromModule('../../assets/viewer-static.min.cjs');
+	} catch (err) {
+		// In the bundled plugin, the asset may still be reachable via the repo-root path.
+		// The render path checks the globals explicitly below and will fail fast if the viewer is unavailable.
+		const msg = err instanceof Error ? err.message : String(err);
+		console.warn('Draw.io viewer load failed via CJS require:', msg);
+	}
+}
 
 export type RenderedDrawio = { block: DiagramBlock; svg: ArrayBuffer };
 
@@ -25,6 +40,7 @@ export class OfflineDrawioRenderer {
 	}
 
 	private async renderOne(source: string): Promise<ArrayBuffer> {
+		ensureOfflineViewerLoaded();
 		if (typeof window === 'undefined' || !(window as any).GraphViewer || !(window as any).mxUtils) {
 			throw new Error('Draw.io viewer script is not available in this Obsidian session');
 		}
