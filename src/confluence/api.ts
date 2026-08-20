@@ -223,28 +223,31 @@ export class ConfluenceApi {
 	}
 
 	private async uploadMultipart(url: string, filename: string, data: ArrayBuffer, mimeType: string): Promise<RequestUrlResponse> {
-		// Multipart uploads do not go through fetch (CORS) or Obsidian requestUrl; in practice Confluence Server still falsely rejects them
-		// after binary-body handling. Use Electron's built-in Node https module instead.
-		// The same Request+FormData serialization + fetch approach was validated in Bun isolation and accepted by Confluence.
+		// Use the same browser/Electron-trusted transport as the rest of the Confluence API.
+		// Direct Node https requests bypass the OS/browser certificate trust path and fail with
+		// corp CA validation issues for generated SVG/PNG attachments even though plain text page
+		// updates succeed. Multipart content remains binary and is sent via a Blob inside FormData.
 		const fd = new FormData();
 		fd.append('file', new Blob([data as BlobPart], { type: mimeType }), filename);
-		const tmp = new Request('http://placeholder.invalid/', { method: 'POST', body: fd });
-		const contentType = tmp.headers.get('Content-Type') ?? 'multipart/form-data';
-		const bodyBuf = Buffer.from(await tmp.arrayBuffer());
 
-		const { status, text } = await nodeHttpsRequest({
-			url,
-			method: 'POST',
-			headers: {
-				Authorization: this.authHeader,
-				Accept: 'application/json',
-				'X-Atlassian-Token': 'no-check',
-				'Content-Type': contentType,
-				'Content-Length': String(bodyBuf.length),
-			},
-			body: bodyBuf,
-		});
+		let response: Response;
+		try {
+			response = await fetch(url, {
+				method: 'POST',
+				headers: {
+					Authorization: this.authHeader,
+					Accept: 'application/json',
+					'X-Atlassian-Token': 'no-check',
+				},
+				body: fd,
+			});
+		} catch (e) {
+			const msg = e instanceof Error ? e.message : String(e);
+			throw new ConfluenceApiError(0, 'network', `Network request failed: ${msg}`);
+		}
 
+		const text = await response.text();
+		const status = response.status;
 		if (status >= 200 && status < 300) {
 			return { status, headers: {}, arrayBuffer: new ArrayBuffer(0), json: null as unknown, text } as RequestUrlResponse;
 		}
