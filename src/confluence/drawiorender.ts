@@ -1,4 +1,4 @@
-import '../../assets/viewer-static.min.js';
+import '../../assets/viewer-static.min.cjs';
 import { DiagramBlock } from './markdownConverter';
 import { Logger } from '../utils/logger';
 
@@ -60,23 +60,31 @@ export class OfflineDrawioRenderer {
 				title: '',
 			});
 
-			await new Promise<void>((resolve, reject) => {
-				const timer = window.setTimeout(() => reject(new Error('Draw.io render timed out after 15s')), 15000);
-				const done = () => {
-					window.clearTimeout(timer);
-					resolve();
-				};
-				try {
-					viewer.addListener('render', done);
-				} catch (e) {
-					window.clearTimeout(timer);
-					reject(e);
-				}
-			});
-
-			const svg = (viewer.graph && typeof viewer.graph.getSvg === 'function')
+			const getSvg = () => (viewer.graph && typeof viewer.graph.getSvg === 'function')
 				? viewer.graph.getSvg()
 				: host.querySelector('svg');
+
+			// GraphViewer's constructor renders and fires "render" synchronously
+			// before it returns, so the event is usually already missed by the
+			// time a listener is attached below. Check for the SVG first and
+			// only wait on the event as a fallback for slower/async renders.
+			let svg = getSvg();
+			if (!svg) {
+				await new Promise<void>((resolve, reject) => {
+					const timer = window.setTimeout(() => reject(new Error('Draw.io render timed out after 15s')), 15000);
+					const done = () => {
+						window.clearTimeout(timer);
+						resolve();
+					};
+					try {
+						viewer.addListener('render', done);
+					} catch (e) {
+						window.clearTimeout(timer);
+						reject(e);
+					}
+				});
+				svg = getSvg();
+			}
 			if (!svg || svg.nodeName.toLowerCase() !== 'svg') {
 				throw new Error('Draw.io produced no SVG output');
 			}
