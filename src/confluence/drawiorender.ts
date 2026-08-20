@@ -64,29 +64,17 @@ export class OfflineDrawioRenderer {
 				? viewer.graph.getSvg()
 				: host.querySelector('svg');
 
-			// GraphViewer's constructor renders and fires "render" synchronously
-			// before it returns, so the event is usually already missed by the
-			// time a listener is attached below. Check for the SVG first and
-			// only wait on the event as a fallback for slower/async renders.
+			// The offline GraphViewer does not reliably fire the "render" event in all
+			// embedded contexts, and the event may already be missed before we attach a listener.
+			// Poll the DOM directly instead: as soon as the viewer materializes the SVG, we use it.
+			const started = Date.now();
 			let svg = getSvg();
-			if (!svg) {
-				await new Promise<void>((resolve, reject) => {
-					const timer = window.setTimeout(() => reject(new Error('Draw.io render timed out after 15s')), 15000);
-					const done = () => {
-						window.clearTimeout(timer);
-						resolve();
-					};
-					try {
-						viewer.addListener('render', done);
-					} catch (e) {
-						window.clearTimeout(timer);
-						reject(e);
-					}
-				});
+			while (!svg && Date.now() - started < 30000) {
+				await new Promise((resolve) => window.setTimeout(resolve, 100));
 				svg = getSvg();
 			}
 			if (!svg || svg.nodeName.toLowerCase() !== 'svg') {
-				throw new Error('Draw.io produced no SVG output');
+				throw new Error('Draw.io produced no SVG output after 30s');
 			}
 
 			if (!svg.getAttribute('xmlns')) svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
