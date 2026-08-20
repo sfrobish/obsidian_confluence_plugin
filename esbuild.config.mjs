@@ -23,8 +23,10 @@ const copyPlugin = {
 			if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 			const manifestSrc = join(cwd, 'manifest.json');
 			const stylesSrc = join(cwd, 'styles.css');
+			const viewerSrc = join(cwd, 'assets', 'viewer-static.min.cjs');
 			if (existsSync(manifestSrc)) copyFileSync(manifestSrc, join(cwd, outDir, 'manifest.json'));
 			if (existsSync(stylesSrc)) copyFileSync(stylesSrc, join(cwd, outDir, 'styles.css'));
+			if (existsSync(viewerSrc)) copyFileSync(viewerSrc, join(cwd, outDir, 'viewer-static.min.cjs'));
 		});
 	},
 };
