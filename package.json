@@ -1,0 +1,41 @@
+{
+	"name": "obsidian_confluence_plugin",
+	"version": "0.3.8",
+	"description": "Periodically sync Obsidian notes to the corresponding Confluence pages via the confluence_url binding in frontmatter",
+	"main": "dist/main.js",
+	"type": "module",
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"test": "bun test",
+		"version": "node version-bump.mjs"
+	},
+	"keywords": [
+		"obsidian",
+		"confluence",
+		"sync"
+	],
+	"license": "MIT",
+	"author": "sfrobish",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/sfrobish/obsidian_confluence_plugin.git"
+	},
+	"bugs": {
+		"url": "https://github.com/sfrobish/obsidian_confluence_plugin/issues"
+	},
+	"homepage": "https://github.com/sfrobish/obsidian_confluence_plugin#readme",
+	"devDependencies": {
+		"@types/js-yaml": "^4.0.9",
+		"@types/markdown-it": "^14.1.2",
+		"@types/node": "^16.11.6",
+		"esbuild": "0.25.5",
+		"tslib": "2.4.0",
+		"typescript": "^5.8.3"
+	},
+	"dependencies": {
+		"js-yaml": "^5.2.2",
+		"markdown-it": "^14.1.0",
+		"obsidian": "latest"
+	}
+}

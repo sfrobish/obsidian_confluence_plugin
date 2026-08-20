@@ -1,0 +1,172 @@
+/*
+Sync Confluence plugin styles
+*/
+
+/* Status bar */
+.sync-confluence-status {
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+}
+
+.sync-confluence-status.idle {
+    color: var(--text-muted);
+}
+
+.sync-confluence-status.syncing {
+    color: var(--text-accent);
+    animation: sync-confluence-pulse 1.5s ease-in-out infinite;
+}
+
+.sync-confluence-status.success {
+    color: var(--text-success);
+}
+
+.sync-confluence-status.failed {
+    color: var(--text-error);
+}
+
+.sync-confluence-status.partial {
+    color: var(--text-warning);
+}
+
+@keyframes sync-confluence-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Settings panel sections */
+.sync-confluence-section {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    padding: 16px;
+    margin: 16px 0;
+    background: var(--background-primary);
+}
+
+.sync-confluence-section h3 {
+    margin-top: 0;
+    color: var(--text-accent);
+}
+
+/* Secret vault hint */
+.sync-confluence-keyvault-hint {
+    margin: 8px 0 16px 0;
+    padding: 10px 12px;
+    background: var(--background-secondary-alt);
+    border-radius: 6px;
+    border-left: 3px solid var(--interactive-accent);
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+}
+
+.sync-confluence-keyvault-hint-label {
+    color: var(--text-normal);
+    font-weight: 500;
+}
+
+/* Authentication validation result */
+.sync-confluence-auth-result {
+    margin-top: 8px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: var(--font-ui-small);
+}
+
+.sync-confluence-auth-result.ok {
+    background: var(--background-modifier-success);
+    color: var(--text-success);
+}
+
+.sync-confluence-auth-result.error {
+    background: var(--background-modifier-error);
+    color: var(--text-error);
+}
+
+/* Multi-line text boxes */
+.sync-confluence-textarea {
+    width: 100%;
+    margin-top: 8px;
+    padding: 8px;
+    min-height: 80px;
+    font-family: var(--font-monospace);
+    font-size: var(--font-ui-small);
+    background: var(--background-modifier-form-field);
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 4px;
+    resize: vertical;
+}
+
+/* Create bound note modal */
+.sync-confluence-create-form {
+    padding: 8px 0;
+}
+
+.sync-confluence-create-form .setting-item {
+    border-top: none;
+    padding-top: 4px;
+}
+
+/* Confirmation modal */
+.sync-confluence-confirm-message {
+    margin-bottom: 16px;
+    padding: 12px;
+    background: var(--background-secondary);
+    border-radius: 6px;
+}
+
+.sync-confluence-confirm-message pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: var(--font-interface);
+    font-size: var(--font-text);
+}
+
+/* Properties panel inline action buttons for the confluence_url row (issue #2) */
+.metadata-property-value:has(.sync-confluence-prop-actions) {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.sync-confluence-prop-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+}
+
+.sync-confluence-prop-btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px;
+    cursor: pointer;
+    opacity: 0.6;
+    color: var(--text-muted);
+}
+
+.sync-confluence-prop-btn:hover {
+    opacity: 1;
+    color: var(--text-normal);
+}
+
+.sync-confluence-prop-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* Multi-instance settings card */
+.sync-confluence-instance-card {
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 12px 0;
+    background: var(--background-secondary);
+}
+
+.sync-confluence-instance-dups {
+    color: var(--text-error);
+    font-size: var(--font-ui-small);
+    margin-top: 4px;
+}
