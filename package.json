@@ -1,14 +1,13 @@
 {
 	"name": "obsidian_confluence_plugin",
-	"version": "0.3.8",
+	"version": "0.1.0",
 	"description": "Periodically sync Obsidian notes to the corresponding Confluence pages via the confluence_url binding in frontmatter",
 	"main": "dist/main.js",
 	"type": "module",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"test": "bun test",
-		"version": "node version-bump.mjs"
+		"test": "bun test"
 	},
 	"keywords": [
 		"obsidian",
