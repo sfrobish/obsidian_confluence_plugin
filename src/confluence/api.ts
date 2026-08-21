@@ -6,8 +6,6 @@ import { URL as NodeURL } from 'url';
 
 const ElectronApi = (() => {
 	try {
-		if (typeof process === 'undefined' || !process.versions?.electron) return null;
-
 		const candidates = [
 			typeof require === 'function' ? require('electron') : null,
 			typeof window !== 'undefined' && (window as any).require ? (window as any).require('electron') : null,
@@ -28,7 +26,14 @@ type ElectronRuntimeStatus =
 	| 'electron-detection-error';
 
 function getElectronRuntimeStatus(): ElectronRuntimeStatus {
-	if (typeof process === 'undefined' || !process.versions?.electron) return 'not-electron';
+	const hasElectronProcess = typeof process !== 'undefined' && !!process.versions?.electron;
+	const hasWindowRequire = typeof window !== 'undefined' && typeof (window as any).require === 'function';
+	const hasGlobalRequire = typeof globalThis !== 'undefined' && typeof (globalThis as any).require === 'function';
+	const hasElectronUA = typeof navigator !== 'undefined' && /electron/i.test(navigator.userAgent || '');
+
+	if (!hasElectronProcess && !hasWindowRequire && !hasGlobalRequire && !hasElectronUA) {
+		return 'not-electron';
+	}
 	if (!ElectronApi) return 'electron-module-unavailable';
 	if (ElectronApi.net && ElectronApi.session) return 'electron-session-ready';
 	if (ElectronApi) return 'electron-session-unavailable';
@@ -300,32 +305,9 @@ export class ConfluenceApi {
 			throw new ConfluenceApiError(status, code, buildErrorMessage('POST', url, status, details), details);
 		}
 
-		console.warn(`[ConfluenceApi] Electron session upload unavailable (${electronStatus}); falling back to requestUrl for multipart attachment upload`);
-
-		// If the Electron session is not currently available (for example during non-Electron test or a partially
-		// initialized renderer), fall back to the plugin's standard requestUrl path instead of throwing a hard
-		// runtime error. This preserves compatibility while the desktop session path is being detected.
-		const boundary = `----obsidian-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-		const body = Buffer.concat([
-			Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename.replace(/"/g, '\\"')}"\r\nContent-Type: ${mimeType}\r\n\r\n`, 'utf8'),
-			Buffer.from(data),
-			Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8'),
-		]);
-		const bodyArrayBuffer = new Uint8Array(body).buffer.slice(
-			new Uint8Array(body).byteOffset,
-			new Uint8Array(body).byteOffset + new Uint8Array(body).byteLength,
-		) as ArrayBuffer;
-
-		return this.request({
-			method: 'POST',
-			url,
-			body: bodyArrayBuffer,
-			contentType: `multipart/form-data; boundary=${boundary}`,
-			extraHeaders: {
-				Authorization: this.authHeader,
-				'X-Atlassian-Token': 'no-check',
-			},
-		});
+		const reason = `Electron session upload unavailable (${electronStatus}). Confluence POST attachment uploads require the Electron session/cookies; the Obsidian requestUrl fallback is rejected with XSRF.`;
+		console.warn(`[ConfluenceApi] ${reason}`);
+		throw new ConfluenceApiError(0, 'network', reason);
 	}
 
 	private async getSessionCookieHeader(url: string): Promise<string> {
