@@ -4,6 +4,14 @@ import * as https from 'https';
 import * as http from 'http';
 import { URL as NodeURL } from 'url';
 
+const ElectronApi = (() => {
+	try {
+		return require('electron');
+	} catch {
+		return null;
+	}
+})();
+
 export class ConfluenceApiError extends Error {
 	constructor(public status: number, public code: ConfluenceErrorCode, message: string, public details?: string) {
 		super(message);
@@ -224,43 +232,60 @@ export class ConfluenceApi {
 	}
 
 	private async uploadMultipart(url: string, filename: string, data: ArrayBuffer, mimeType: string): Promise<RequestUrlResponse> {
-		// Confluence Server rejects POSTs sent through Obsidian requestUrl with XSRF false positives.
-		// For attachment uploads, the trusted workaround is the Electron-backed Node https client,
-		// but it must include the corporate CA chain so the certificate verification succeeds.
-		const boundary = `----obsidian-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-		const partHeader = [
-			`--${boundary}`,
-			`Content-Disposition: form-data; name="file"; filename="${filename.replace(/"/g, '\\"')}"`,
-			`Content-Type: ${mimeType}`,
-			'',
-			'',
-		].join('\r\n');
-		const tail = `\r\n--${boundary}--\r\n`;
-		const body = Buffer.concat([
-			Buffer.from(partHeader, 'utf8'),
-			Buffer.from(data),
-			Buffer.from(tail, 'utf8'),
-		]);
+		// Electron can submit the multipart upload using the desktop app's session/cookies, which is the
+		// only path that Confluence Server accepts without tripping CSRF. Raw Node https requests bypass
+		// the Electron session and still fail with XSRF even when Authorization and no-check are present.
+		if (ElectronApi && ElectronApi.net && ElectronApi.session) {
+			const boundary = `----obsidian-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+			const partHeader = [
+				`--${boundary}`,
+				`Content-Disposition: form-data; name="file"; filename="${filename.replace(/"/g, '\\"')}"`,
+				`Content-Type: ${mimeType}`,
+				'',
+				'',
+			].join('\r\n');
+			const tail = `\r\n--${boundary}--\r\n`;
+			const body = Buffer.concat([
+				Buffer.from(partHeader, 'utf8'),
+				Buffer.from(data),
+				Buffer.from(tail, 'utf8'),
+			]);
 
-		const { status, text } = await nodeHttpsRequest({
-			url,
-			method: 'POST',
-			headers: {
-				Authorization: this.authHeader,
-				Accept: 'application/json',
-				'X-Atlassian-Token': 'no-check',
-				'Content-Type': `multipart/form-data; boundary=${boundary}`,
-				'Content-Length': String(body.length),
-			},
-			body,
-		});
+			const cookieHeader = await this.getSessionCookieHeader(url);
+			const { status, text } = await electronNetRequest({
+				url,
+				method: 'POST',
+				headers: {
+					Authorization: this.authHeader,
+					Accept: 'application/json',
+					'X-Atlassian-Token': 'no-check',
+					'Content-Type': `multipart/form-data; boundary=${boundary}`,
+					'Content-Length': String(body.length),
+					...(cookieHeader ? { Cookie: cookieHeader } : {}),
+				},
+				body,
+			});
 
-		if (status >= 200 && status < 300) {
-			return { status, headers: {}, arrayBuffer: new ArrayBuffer(0), json: null as unknown, text } as RequestUrlResponse;
+			if (status >= 200 && status < 300) {
+				return { status, headers: {}, arrayBuffer: new ArrayBuffer(0), json: null as unknown, text } as RequestUrlResponse;
+			}
+			const code = classifyError(status);
+			const details = truncate(text, 500);
+			throw new ConfluenceApiError(status, code, buildErrorMessage('POST', url, status, details), details);
 		}
-		const code = classifyError(status);
-		const details = truncate(text, 500);
-		throw new ConfluenceApiError(status, code, buildErrorMessage('POST', url, status, details), details);
+
+		throw new ConfluenceApiError(0, 'network', 'Electron session upload is unavailable in this runtime');
+	}
+
+	private async getSessionCookieHeader(url: string): Promise<string> {
+		if (!ElectronApi || !ElectronApi.session || !ElectronApi.session.defaultSession) return '';
+		try {
+			const origin = new NodeURL(url).origin;
+			const cookies = await ElectronApi.session.defaultSession.cookies.get({ url: origin });
+			return cookies.map((c: { name: string; value: string }) => `${c.name}=${c.value}`).join('; ');
+		} catch {
+			return '';
+		}
 	}
 
 	private async request(opts: {
@@ -329,6 +354,35 @@ function buildErrorMessage(method: string, url: string, status: number, details:
  * Send requests directly through Electron's built-in Node https/http module — bypassing browser CORS and
  * the binary-body handling quirks in Obsidian requestUrl.
  */
+function electronNetRequest(opts: {
+	url: string;
+	method: string;
+	headers: Record<string, string>;
+	body: Buffer;
+}): Promise<{ status: number; text: string }> {
+	return new Promise((resolve, reject) => {
+		if (!ElectronApi || !ElectronApi.net) {
+			reject(new Error('Electron net is unavailable')); 
+			return;
+		}
+		const req = ElectronApi.net.request(opts.url);
+		req.on('response', (res: { statusCode?: number; on: (event: string, callback: (chunk: Buffer) => void) => void; }) => {
+			const chunks: Buffer[] = [];
+			res.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+			res.on('end', () => resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }));
+		});
+		req.on('error', reject);
+		req.setHeader('Content-Type', opts.headers['Content-Type']);
+		req.setHeader('Authorization', opts.headers.Authorization);
+		req.setHeader('Accept', opts.headers.Accept);
+		req.setHeader('X-Atlassian-Token', opts.headers['X-Atlassian-Token']);
+		if (opts.headers.Cookie) req.setHeader('Cookie', opts.headers.Cookie);
+		req.setHeader('Content-Length', String(opts.body.length));
+		req.write(opts.body);
+		req.end();
+	});
+}
+
 function nodeHttpsRequest(opts: {
 	url: string;
 	method: string;
