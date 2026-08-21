@@ -262,41 +262,35 @@ export class ConfluenceApi {
 	private async uploadMultipart(url: string, filename: string, data: ArrayBuffer, mimeType: string): Promise<RequestUrlResponse> {
 		const electronStatus = getElectronRuntimeStatus();
 
-		// Electron can submit the multipart upload using the desktop app's session/cookies, which is the
-		// only path that Confluence Server accepts without tripping CSRF. Raw Node https requests bypass
-		// the Electron session and still fail with XSRF even when Authorization and no-check are present.
+		// Confluence Server expects the POST to be sent via the authenticated Electron session, not a raw Node
+		// request or Obsidian requestUrl fallback. The browser-side request path does not carry the desktop
+		// cookie jar, which is why Confluence rejects the upload with XSRF.
 		if (electronStatus === 'electron-session-ready') {
-			console.info('[ConfluenceApi] Using Electron session upload for attachment request');
+			console.info('[ConfluenceApi] Using Electron session.upload for attachment request');
 			const boundary = `----obsidian-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-			const partHeader = [
-				`--${boundary}`,
-				`Content-Disposition: form-data; name="file"; filename="${filename.replace(/"/g, '\\"')}"`,
-				`Content-Type: ${mimeType}`,
-				'',
-				'',
-			].join('\r\n');
-			const tail = `\r\n--${boundary}--\r\n`;
-			const body = Buffer.concat([
-				Buffer.from(partHeader, 'utf8'),
-				Buffer.from(data),
-				Buffer.from(tail, 'utf8'),
-			]);
+			const body = new Blob([
+				`--${boundary}\r\n`,
+				`Content-Disposition: form-data; name="file"; filename="${filename.replace(/"/g, '\\"')}"\r\n`,
+				`Content-Type: ${mimeType}\r\n\r\n`,
+				new Uint8Array(data),
+				`\r\n--${boundary}--\r\n`,
+			], { type: 'application/octet-stream' });
 
 			const cookieHeader = await this.getSessionCookieHeader(url);
-			const { status, text } = await electronNetRequest({
-				url,
+			const response = await ElectronApi.session.defaultSession.fetch(url, {
 				method: 'POST',
 				headers: {
 					Authorization: this.authHeader,
 					Accept: 'application/json',
 					'X-Atlassian-Token': 'no-check',
 					'Content-Type': `multipart/form-data; boundary=${boundary}`,
-					'Content-Length': String(body.length),
 					...(cookieHeader ? { Cookie: cookieHeader } : {}),
 				},
 				body,
 			});
 
+			const text = await response.text();
+			const status = response.status;
 			if (status >= 200 && status < 300) {
 				return { status, headers: {}, arrayBuffer: new ArrayBuffer(0), json: null as unknown, text } as RequestUrlResponse;
 			}
