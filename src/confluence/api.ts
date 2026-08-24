@@ -286,6 +286,34 @@ export class ConfluenceApi {
 		}
 	}
 
+	private async getSessionCookieValue(url: string, name: string): Promise<string> {
+		if (!ElectronApi || !ElectronApi.session || !ElectronApi.session.defaultSession) return '';
+		try {
+			const origin = new NodeURL(url).origin;
+			const cookies = await ElectronApi.session.defaultSession.cookies.get({ url: origin });
+			return cookies.find((c: { name: string; value: string }) => c.name === name)?.value ?? '';
+		} catch {
+			return '';
+		}
+	}
+
+	private async getConfluenceWriteHeaders(url: string, method: string, contentType?: string): Promise<Record<string, string>> {
+		const origin = new NodeURL(url).origin;
+		const cookieHeader = await this.getSessionCookieHeader(url);
+		const xsrfToken = await this.getSessionCookieValue(url, 'atlassian.xsrf.token');
+		const headers: Record<string, string> = {
+			Authorization: this.authHeader,
+			Accept: 'application/json',
+			Origin: origin,
+			Referer: url,
+			...(contentType ? { 'Content-Type': contentType } : {}),
+			...(method !== 'GET' ? { 'X-Atlassian-Token': 'no-check' } : {}),
+			...(xsrfToken && method !== 'GET' ? { 'X-CSRF-Token': xsrfToken } : {}),
+			...(cookieHeader ? { Cookie: cookieHeader } : {}),
+		};
+		return headers;
+	}
+
 	private async sessionRequest(opts: {
 		method: string;
 		url: string;
@@ -298,27 +326,26 @@ export class ConfluenceApi {
 			throw new ConfluenceApiError(0, 'network', reason);
 		}
 
+		const origin = new NodeURL(opts.url).origin;
 		const cookieHeader = await this.getSessionCookieHeader(opts.url);
+		const xsrfToken = await this.getSessionCookieValue(opts.url, 'atlassian.xsrf.token');
 		const cookieCount = cookieHeader ? cookieHeader.split(';').filter(Boolean).length : 0;
 		if (opts.method !== 'GET' && cookieCount === 0) {
 			console.warn('[ConfluenceApi] No Confluence cookies found in Electron session before write request', {
 				method: opts.method,
 				url: opts.url,
-				origin: new NodeURL(opts.url).origin,
+				origin,
 			});
 		}
-		const headers: Record<string, string> = {
-			Authorization: this.authHeader,
-			Accept: 'application/json',
-			...(opts.contentType ? { 'Content-Type': opts.contentType } : {}),
-			...(cookieHeader ? { Cookie: cookieHeader } : {}),
-		};
+		const headers = await this.getConfluenceWriteHeaders(opts.url, opts.method, opts.contentType);
 
 		console.info('[ConfluenceApi] Session request', {
 			method: opts.method,
 			url: opts.url,
 			hasCookieHeader: !!cookieHeader,
 			cookieCount,
+			hasXsrfToken: !!xsrfToken,
+			headerNames: Object.keys(headers),
 			status,
 		});
 		const response = await ElectronApi.session.defaultSession.fetch(opts.url, {
