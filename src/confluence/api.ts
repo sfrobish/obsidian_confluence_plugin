@@ -30,6 +30,18 @@ function getElectronRuntimeStatus(): ElectronRuntimeStatus {
 	const hasGlobalRequire = typeof globalThis !== 'undefined' && typeof (globalThis as any).require === 'function';
 	const hasElectronUA = typeof navigator !== 'undefined' && /electron/i.test(navigator.userAgent || '');
 
+	const debugInfo = {
+		hasElectronProcess,
+		hasWindowRequire,
+		hasGlobalRequire,
+		hasElectronUA,
+		electronApiLoaded: !!ElectronApi,
+		electronApiKeys: ElectronApi ? Object.keys(ElectronApi) : [],
+		electronSession: ElectronApi?.session ?? null,
+		electronNet: ElectronApi?.net ?? null,
+	};
+	console.debug('[ConfluenceApi] Electron runtime detection', debugInfo);
+
 	if (!hasElectronProcess && !hasWindowRequire && !hasGlobalRequire && !hasElectronUA) {
 		return 'not-electron';
 	}
@@ -253,6 +265,12 @@ export class ConfluenceApi {
 		if (electronStatus !== 'electron-session-ready') {
 			const reason = `Electron session is unavailable (${electronStatus}); Confluence write requests must use the authenticated desktop session.`;
 			console.warn(`[ConfluenceApi] ${reason}`);
+			console.warn('[ConfluenceApi] Electron session debug', {
+				electronStatus,
+				hasElectronApi: !!ElectronApi,
+				electronSession: ElectronApi?.session ?? null,
+				electronNet: ElectronApi?.net ?? null,
+			});
 			throw new ConfluenceApiError(0, 'network', reason);
 		}
 
