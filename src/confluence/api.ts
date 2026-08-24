@@ -17,6 +17,20 @@ const ElectronApi = (() => {
 	}
 })();
 
+function getElectronDefaultSession(): any {
+	if (!ElectronApi) return null;
+	if (ElectronApi.session?.defaultSession) return ElectronApi.session.defaultSession;
+	if (ElectronApi.remote?.session?.defaultSession) return ElectronApi.remote.session.defaultSession;
+	return null;
+}
+
+function getElectronNet(): any {
+	if (!ElectronApi) return null;
+	if (ElectronApi.net) return ElectronApi.net;
+	if (ElectronApi.remote?.net) return ElectronApi.remote.net;
+	return null;
+}
+
 type ElectronRuntimeStatus =
 	| 'not-electron'
 	| 'electron-session-ready'
@@ -29,6 +43,8 @@ function getElectronRuntimeStatus(): ElectronRuntimeStatus {
 	const hasWindowRequire = typeof window !== 'undefined' && typeof (window as any).require === 'function';
 	const hasGlobalRequire = typeof globalThis !== 'undefined' && typeof (globalThis as any).require === 'function';
 	const hasElectronUA = typeof navigator !== 'undefined' && /electron/i.test(navigator.userAgent || '');
+	const session = getElectronDefaultSession();
+	const net = getElectronNet();
 
 	const debugInfo = {
 		hasElectronProcess,
@@ -37,16 +53,16 @@ function getElectronRuntimeStatus(): ElectronRuntimeStatus {
 		hasElectronUA,
 		electronApiLoaded: !!ElectronApi,
 		electronApiKeys: ElectronApi ? Object.keys(ElectronApi) : [],
-		electronSession: ElectronApi?.session ?? null,
-		electronNet: ElectronApi?.net ?? null,
+		electronSession: session ?? null,
+		electronNet: net ?? null,
 	};
-	console.debug('[ConfluenceApi] Electron runtime detection', debugInfo);
+	console.log('[ConfluenceApi] Electron runtime detection', debugInfo);
 
 	if (!hasElectronProcess && !hasWindowRequire && !hasGlobalRequire && !hasElectronUA) {
 		return 'not-electron';
 	}
 	if (!ElectronApi) return 'electron-module-unavailable';
-	if (ElectronApi.net && ElectronApi.session) return 'electron-session-ready';
+	if (net && session) return 'electron-session-ready';
 	if (ElectronApi) return 'electron-session-unavailable';
 	return 'electron-detection-error';
 }
@@ -294,10 +310,11 @@ export class ConfluenceApi {
 	}
 
 	private async getSessionCookieHeader(url: string): Promise<string> {
-		if (!ElectronApi || !ElectronApi.session || !ElectronApi.session.defaultSession) return '';
+		const defaultSession = getElectronDefaultSession();
+		if (!defaultSession) return '';
 		try {
 			const origin = new NodeURL(url).origin;
-			const cookies = await ElectronApi.session.defaultSession.cookies.get({ url: origin });
+			const cookies = await defaultSession.cookies.get({ url: origin });
 			return cookies.map((c: { name: string; value: string }) => `${c.name}=${c.value}`).join('; ');
 		} catch {
 			return '';
@@ -305,10 +322,11 @@ export class ConfluenceApi {
 	}
 
 	private async getSessionCookieValue(url: string, name: string): Promise<string> {
-		if (!ElectronApi || !ElectronApi.session || !ElectronApi.session.defaultSession) return '';
+		const defaultSession = getElectronDefaultSession();
+		if (!defaultSession) return '';
 		try {
 			const origin = new NodeURL(url).origin;
-			const cookies = await ElectronApi.session.defaultSession.cookies.get({ url: origin });
+			const cookies = await defaultSession.cookies.get({ url: origin });
 			return cookies.find((c: { name: string; value: string }) => c.name === name)?.value ?? '';
 		} catch {
 			return '';
@@ -366,7 +384,11 @@ export class ConfluenceApi {
 			headerNames: Object.keys(headers),
 			status,
 		});
-		const response = await ElectronApi.session.defaultSession.fetch(opts.url, {
+		const defaultSession = getElectronDefaultSession();
+		if (!defaultSession) {
+			throw new ConfluenceApiError(0, 'network', 'Electron defaultSession is unavailable even though the runtime was detected.');
+		}
+		const response = await defaultSession.fetch(opts.url, {
 			method: opts.method,
 			headers,
 			body: opts.body,
