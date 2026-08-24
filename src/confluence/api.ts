@@ -1,4 +1,3 @@
-import { requestUrl, type RequestUrlParam, type RequestUrlResponse } from 'obsidian';
 import * as fs from 'fs';
 import * as https from 'https';
 import * as http from 'http';
@@ -112,7 +111,7 @@ export class ConfluenceApi {
 	/** GET /rest/api/user/current — used to validate the token. Returns the current user displayName. */
 	async validateAuth(): Promise<{ ok: true; displayName: string } | { ok: false; error: string }> {
 		try {
-			const res = await this.request({
+			const res = await this.sessionRequest({
 				method: 'GET',
 				url: `${this.baseUrl}/rest/api/user/current`,
 			});
@@ -126,7 +125,7 @@ export class ConfluenceApi {
 
 	/** GET a single page's metadata (version + title). */
 	async getPage(pageId: string): Promise<PageInfo> {
-		const res = await this.request({
+		const res = await this.sessionRequest({
 			method: 'GET',
 			url: `${this.baseUrl}/rest/api/content/${encodeURIComponent(pageId)}?expand=version,space`,
 		});
@@ -165,21 +164,12 @@ export class ConfluenceApi {
 				},
 			},
 		});
-		// In practice, Obsidian requestUrl with POST + JSON body triggers Confluence Server XSRF false positives;
-		// like multipart uploads, it is sent directly via Electron's built-in Node https. PUT works with requestUrl, only POST is problematic.
-		const bodyBuf = Buffer.from(body, 'utf8');
 		const url = `${this.baseUrl}/rest/api/content`;
-		const { status, text } = await nodeHttpsRequest({
-			url,
+		const { status, text } = await this.sessionRequest({
 			method: 'POST',
-			headers: {
-				Authorization: this.authHeader,
-				Accept: 'application/json',
-				'X-Atlassian-Token': 'no-check',
-				'Content-Type': 'application/json',
-				'Content-Length': String(bodyBuf.length),
-			},
-			body: bodyBuf,
+			url,
+			contentType: 'application/json',
+			body,
 		});
 		if (status < 200 || status >= 300) {
 			const code = classifyError(status);
@@ -210,19 +200,18 @@ export class ConfluenceApi {
 				},
 			},
 		});
-		await this.request({
+		await this.sessionRequest({
 			method: 'PUT',
 			url: `${this.baseUrl}/rest/api/content/${encodeURIComponent(pageId)}`,
 			contentType: 'application/json',
 			body,
-			extraHeaders: { 'X-Atlassian-Token': 'no-check' },
 		});
 	}
 
 	/** List attachments for a specific filename to decide whether to create or update a version. */
 	async findAttachmentByFilename(pageId: string, filename: string): Promise<AttachmentMeta | null> {
 		const url = `${this.baseUrl}/rest/api/content/${encodeURIComponent(pageId)}/child/attachment?filename=${encodeURIComponent(filename)}`;
-		const res = await this.request({ method: 'GET', url });
+		const res = await this.sessionRequest({ method: 'GET', url });
 		const data = JSON.parse(res.text) as {
 			results?: Array<{
 				id: string;
@@ -259,49 +248,31 @@ export class ConfluenceApi {
 		return { id: parsed.id ?? attachmentId, filename: parsed.title ?? filename, version: parsed.version?.number ?? 1 };
 	}
 
-	private async uploadMultipart(url: string, filename: string, data: ArrayBuffer, mimeType: string): Promise<RequestUrlResponse> {
+	private async uploadMultipart(url: string, filename: string, data: ArrayBuffer, mimeType: string): Promise<{ status: number; text: string }> {
 		const electronStatus = getElectronRuntimeStatus();
-
-		// Confluence Server expects the POST to be sent via the authenticated Electron session, not a raw Node
-		// request or Obsidian requestUrl fallback. The browser-side request path does not carry the desktop
-		// cookie jar, which is why Confluence rejects the upload with XSRF.
-		if (electronStatus === 'electron-session-ready') {
-			console.info('[ConfluenceApi] Using Electron session.upload for attachment request');
-			const boundary = `----obsidian-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-			const body = new Blob([
-				`--${boundary}\r\n`,
-				`Content-Disposition: form-data; name="file"; filename="${filename.replace(/"/g, '\\"')}"\r\n`,
-				`Content-Type: ${mimeType}\r\n\r\n`,
-				new Uint8Array(data),
-				`\r\n--${boundary}--\r\n`,
-			], { type: 'application/octet-stream' });
-
-			const cookieHeader = await this.getSessionCookieHeader(url);
-			const response = await ElectronApi.session.defaultSession.fetch(url, {
-				method: 'POST',
-				headers: {
-					Authorization: this.authHeader,
-					Accept: 'application/json',
-					'X-Atlassian-Token': 'no-check',
-					'Content-Type': `multipart/form-data; boundary=${boundary}`,
-					...(cookieHeader ? { Cookie: cookieHeader } : {}),
-				},
-				body,
-			});
-
-			const text = await response.text();
-			const status = response.status;
-			if (status >= 200 && status < 300) {
-				return { status, headers: {}, arrayBuffer: new ArrayBuffer(0), json: null as unknown, text } as RequestUrlResponse;
-			}
-			const code = classifyError(status);
-			const details = truncate(text, 500);
-			throw new ConfluenceApiError(status, code, buildErrorMessage('POST', url, status, details), details);
+		if (electronStatus !== 'electron-session-ready') {
+			const reason = `Electron session is unavailable (${electronStatus}); Confluence write requests must use the authenticated desktop session.`;
+			console.warn(`[ConfluenceApi] ${reason}`);
+			throw new ConfluenceApiError(0, 'network', reason);
 		}
 
-		const reason = `Electron session upload unavailable (${electronStatus}). Confluence POST attachment uploads require the Electron session/cookies; the Obsidian requestUrl fallback is rejected with XSRF.`;
-		console.warn(`[ConfluenceApi] ${reason}`);
-		throw new ConfluenceApiError(0, 'network', reason);
+		console.info('[ConfluenceApi] Using Electron session.fetch for attachment request');
+		const boundary = `----obsidian-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+		const body = new Blob([
+			`--${boundary}\r\n`,
+			`Content-Disposition: form-data; name="file"; filename="${filename.replace(/"/g, '\\"')}"\r\n`,
+			`Content-Type: ${mimeType}\r\n\r\n`,
+			new Uint8Array(data),
+			`\r\n--${boundary}--\r\n`,
+		], { type: 'application/octet-stream' });
+
+		const response = await this.sessionRequest({
+			method: 'POST',
+			url,
+			contentType: `multipart/form-data; boundary=${boundary}`,
+			body,
+		});
+		return response;
 	}
 
 	private async getSessionCookieHeader(url: string): Promise<string> {
@@ -315,42 +286,57 @@ export class ConfluenceApi {
 		}
 	}
 
-	private async request(opts: {
+	private async sessionRequest(opts: {
 		method: string;
 		url: string;
-		body?: string | ArrayBuffer;
+		body?: string | ArrayBuffer | Blob;
 		contentType?: string;
-		extraHeaders?: Record<string, string>;
-	}): Promise<RequestUrlResponse> {
+	}): Promise<{ status: number; text: string }> {
+		const status = getElectronRuntimeStatus();
+		if (status !== 'electron-session-ready') {
+			const reason = `Confluence request attempted without a valid Electron session (${status}).`;
+			throw new ConfluenceApiError(0, 'network', reason);
+		}
+
+		const cookieHeader = await this.getSessionCookieHeader(opts.url);
+		const cookieCount = cookieHeader ? cookieHeader.split(';').filter(Boolean).length : 0;
+		if (opts.method !== 'GET' && cookieCount === 0) {
+			console.warn('[ConfluenceApi] No Confluence cookies found in Electron session before write request', {
+				method: opts.method,
+				url: opts.url,
+				origin: new NodeURL(opts.url).origin,
+			});
+		}
 		const headers: Record<string, string> = {
 			Authorization: this.authHeader,
 			Accept: 'application/json',
-			...(opts.extraHeaders ?? {}),
+			...(opts.contentType ? { 'Content-Type': opts.contentType } : {}),
+			...(cookieHeader ? { Cookie: cookieHeader } : {}),
 		};
-		if (opts.contentType) headers['Content-Type'] = opts.contentType;
 
-		const param: RequestUrlParam = {
+		console.info('[ConfluenceApi] Session request', {
 			method: opts.method,
 			url: opts.url,
+			hasCookieHeader: !!cookieHeader,
+			cookieCount,
+			status,
+		});
+		const response = await ElectronApi.session.defaultSession.fetch(opts.url, {
+			method: opts.method,
 			headers,
 			body: opts.body,
-			throw: false,
-		};
+		});
 
-		let res: RequestUrlResponse;
-		try {
-			res = await requestUrl(param);
-		} catch (e) {
-			const msg = e instanceof Error ? e.message : String(e);
-			throw new ConfluenceApiError(0, 'network', `Network request failed: ${msg}`);
+		const text = await response.text();
+		const responseStatus = response.status;
+		if (responseStatus >= 200 && responseStatus < 300) {
+			return { status: responseStatus, text };
 		}
 
-		if (res.status >= 200 && res.status < 300) return res;
-
-		const code = classifyError(res.status);
-		const details = truncate(safeText(res), 500);
-		const message = buildErrorMessage(opts.method, opts.url, res.status, details);
-		throw new ConfluenceApiError(res.status, code, message, details);
+		const code = classifyError(responseStatus);
+		const details = truncate(text, 500);
+		const message = buildErrorMessage(opts.method, opts.url, responseStatus, details);
+		throw new ConfluenceApiError(responseStatus, code, message, details);
 	}
 }
 
@@ -360,10 +346,6 @@ function classifyError(status: number): ConfluenceErrorCode {
 	if (status === 409) return 'version_conflict';
 	if (status === 429) return 'rate_limited';
 	return 'unknown';
-}
-
-function safeText(res: RequestUrlResponse): string {
-	try { return res.text ?? ''; } catch { return ''; }
 }
 
 function truncate(s: string, max: number): string {
@@ -376,81 +358,6 @@ function buildErrorMessage(method: string, url: string, status: number, details:
 	return `Confluence ${method} ${path} → ${status}${details ? ': ' + details : ''}`;
 }
 
-
-/**
- * Send requests directly through Electron's built-in Node https/http module — bypassing browser CORS and
- * the binary-body handling quirks in Obsidian requestUrl.
- */
-function electronNetRequest(opts: {
-	url: string;
-	method: string;
-	headers: Record<string, string>;
-	body: Buffer;
-}): Promise<{ status: number; text: string }> {
-	return new Promise((resolve, reject) => {
-		if (!ElectronApi || !ElectronApi.net) {
-			reject(new Error('Electron net is unavailable')); 
-			return;
-		}
-		const req = ElectronApi.net.request(opts.url);
-		req.on('response', (res: { statusCode?: number; on: (event: string, callback: (chunk: Buffer) => void) => void; }) => {
-			const chunks: Buffer[] = [];
-			res.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
-			res.on('end', () => resolve({ status: res.statusCode ?? 0, text: Buffer.concat(chunks).toString('utf8') }));
-		});
-		req.on('error', reject);
-		req.setHeader('Content-Type', opts.headers['Content-Type']);
-		req.setHeader('Authorization', opts.headers.Authorization);
-		req.setHeader('Accept', opts.headers.Accept);
-		req.setHeader('X-Atlassian-Token', opts.headers['X-Atlassian-Token']);
-		if (opts.headers.Cookie) req.setHeader('Cookie', opts.headers.Cookie);
-		req.setHeader('Content-Length', String(opts.body.length));
-		req.write(opts.body);
-		req.end();
-	});
-}
-
-function nodeHttpsRequest(opts: {
-	url: string;
-	method: string;
-	headers: Record<string, string>;
-	body: Buffer;
-}): Promise<{ status: number; text: string }> {
-	return new Promise((resolve, reject) => {
-		const parsed = new NodeURL(opts.url);
-		const lib = parsed.protocol === 'http:' ? http : https;
-		const ca = readCustomCaBundle();
-		const req = lib.request({
-			protocol: parsed.protocol,
-			hostname: parsed.hostname,
-			port: parsed.port || (parsed.protocol === 'http:' ? 80 : 443),
-			path: parsed.pathname + parsed.search,
-			method: opts.method,
-			headers: opts.headers,
-			...(ca ? { ca } : {}),
-		}, (res) => {
-			const chunks: Buffer[] = [];
-			res.on('data', (c: Buffer) => chunks.push(c));
-			res.on('end', () => {
-				const text = Buffer.concat(chunks).toString('utf8');
-				resolve({ status: res.statusCode ?? 0, text });
-			});
-		});
-		req.on('error', (e) => reject(e));
-		req.write(opts.body);
-		req.end();
-	});
-}
-
-function readCustomCaBundle(): Buffer | undefined {
-	const envPath = process.env.NODE_EXTRA_CA_CERTS ?? process.env.CONFLUENCE_CA_FILE ?? process.env.CONFLUENCE_CA_PATH;
-	if (!envPath) return undefined;
-	try {
-		return fs.readFileSync(envPath);
-	} catch {
-		return undefined;
-	}
-}
 
 /** UTF-8-safe Base64 encoding; Obsidian desktop runs in Electron, where btoa is available in the browser side but only accepts latin1. */
 function encodeBase64Utf8(input: string): string {
