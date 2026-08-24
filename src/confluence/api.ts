@@ -325,6 +325,7 @@ export class ConfluenceApi {
 		const headers: Record<string, string> = {
 			Authorization: this.authHeader,
 			Accept: 'application/json',
+			'X-Atlassian-Token': 'no-check',
 			...(opts.extraHeaders ?? {}),
 		};
 		if (opts.contentType) headers['Content-Type'] = opts.contentType;
