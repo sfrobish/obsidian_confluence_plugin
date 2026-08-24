@@ -199,6 +199,17 @@ export default class SyncConfluencePlugin extends Plugin {
 		for (const inst of this.settings.instances) {
 			const tokenValue = await this.getApiTokenValueForInstance(inst.id);
 			const needsUsername = inst.authType === 'basic';
+			console.log('[Sync Confluence] auth debug', {
+				instanceId: inst.id,
+				baseUrl: inst.baseUrl,
+				authType: inst.authType,
+				username: inst.username,
+				apiTokenKey: inst.apiToken,
+				tokenResolved: !!tokenValue,
+				tokenLength: tokenValue?.length ?? 0,
+				hasBaseUrl: !!inst.baseUrl,
+				hasUsername: !!inst.username,
+			});
 			if (!inst.baseUrl || (needsUsername && !inst.username) || !tokenValue) {
 				continue;
 			}
