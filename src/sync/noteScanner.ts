@@ -28,8 +28,10 @@ export function scanBoundNotes(app: App, opts: ScanOptions): TFile[] {
 		if (ignoreRegexes.some((r) => r.test(file.path))) continue;
 			const fm = app.metadataCache.getFileCache(file)?.frontmatter as Frontmatter | undefined;
 			if (!fm) continue;
+			const isIndexPage = file.basename === '_index';
+			const hasHierarchyAnchor = isIndexPage && (!!fm.confluence_page_id || !!fm.confluence_url || !!fm.confluence_parent_url);
 			// Sync only when url or parent_url has at least one value (parent_url is used for creating child pages on first sync)
-			if (!frontmatterHasBinding(fm, opts.frontmatterKey)) continue;
+			if (!frontmatterHasBinding(fm, opts.frontmatterKey) && !hasHierarchyAnchor) continue;
 			out.push(file);
 	}
 	return out;

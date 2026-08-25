@@ -1,4 +1,4 @@
-import { type App, type TFile, TFile as TFileCtor } from 'obsidian';
+import { type App, TFile, TFile as TFileCtor } from 'obsidian';
 import { ConfluenceApi, ConfluenceApiError } from '../confluence/api';
 import { parsePageIdFromUrl } from '../confluence/urlParser';
 import {
@@ -514,30 +514,27 @@ export class SyncEngine {
 					targetUpdates.push({});
 					continue;
 				}
-				if (!target.parentUrl) {
-					targetUpdates.push({});
-					continue;
-				}
-				const parentId = parsePageIdFromUrl(target.parentUrl);
-				if (!parentId) {
+				const parentInfo = await this.resolveEffectiveParentInfo(file, target);
+				const resolvedParentId = parentInfo.parentId ?? '';
+				if (!resolvedParentId) {
 					targetUpdates.push({});
 					continue;
 				}
 				try {
-					const parent = await api.getPage(parentId);
+					const parent = await api.getPage(resolvedParentId);
 					if (!parent.spaceKey) {
 						targetUpdates.push({});
 						continue;
 					}
-					logger.info(`Pre-creating child page: ${file.basename} (parent=${parentId}, space=${parent.spaceKey})`);
+					logger.info(`Pre-creating child page: ${file.basename} (parent=${resolvedParentId}, source=${parentInfo.source}, space=${parent.spaceKey})`);
 					const created = await api.createPage({
 						spaceKey: parent.spaceKey,
-						parentId,
+						parentId: resolvedParentId,
 						title: file.basename,
 						storageXhtml: '<p>(syncing…)</p>',
 					});
 					targetUpdates.push({
-						parentUrl: target.parentUrl,
+						parentUrl: target.parentUrl || undefined,
 						pageId: created.id,
 						url: created.webUrl,
 					});
@@ -552,6 +549,50 @@ export class SyncEngine {
 				await writeBinding(app, file, { targetUpdates, _formats: binding._formats }, settings.frontmatterKey);
 			}
 		}
+	}
+
+	private resolveFrontmatterPageId(fm: Record<string, unknown> | undefined): string | null {
+		const candidates = [
+			typeof fm?.confluence_page_id === 'string' ? fm.confluence_page_id.trim() : '',
+			typeof fm?.confluence_url === 'string' ? parsePageIdFromUrl(fm.confluence_url) ?? '' : '',
+			typeof fm?.confluence_parent_url === 'string' ? parsePageIdFromUrl(fm.confluence_parent_url) ?? '' : '',
+		];
+		const pageId = candidates.find((candidate) => candidate && candidate !== '0');
+		return pageId ?? null;
+	}
+
+	private async resolveEffectiveParentInfo(file: TFile, target: SyncTarget): Promise<{ parentId: string | null; source: 'target' | 'folder' | 'none' }> {
+		const parentFromTarget = target.parentUrl ? parsePageIdFromUrl(target.parentUrl) ?? null : null;
+		if (parentFromTarget) {
+			return { parentId: parentFromTarget, source: 'target' };
+		}
+
+		const parentFromFolder = await this.resolveFolderParentPageId(file);
+		if (parentFromFolder) {
+			return { parentId: parentFromFolder, source: 'folder' };
+		}
+
+		return { parentId: null, source: 'none' };
+	}
+
+	private async resolveFolderParentPageId(file: TFile): Promise<string | null> {
+		let current = file.path.includes('/')
+			? file.path.split('/').slice(0, -1).join('/')
+			: '';
+
+		while (current.length > 0) {
+			const indexPath = `${current}/_index.md`;
+			const indexFile = this.deps.app.vault.getAbstractFileByPath(indexPath);
+			if (indexFile && indexFile instanceof TFile) {
+				const fm = this.deps.app.metadataCache.getFileCache(indexFile)?.frontmatter as Record<string, unknown> | undefined;
+				const pageId = this.resolveFrontmatterPageId(fm);
+				if (pageId) return pageId;
+			}
+			current = current.includes('/')
+				? current.slice(0, current.lastIndexOf('/'))
+				: '';
+		}
+		return null;
 	}
 
 	private async renderMermaidOnce(refs: ExtractedReferences): Promise<RenderedDiagram[]> {
@@ -590,16 +631,17 @@ export class SyncEngine {
 		let createdNewPage = false;
 		try {
 			if (!pageId) {
-				if (!target.parentUrl) {
-					throw new Error(`Could not parse pageId from URL: ${target.url}`);
-				}
-				const parentId = parsePageIdFromUrl(target.parentUrl);
+				const parentInfo = await this.resolveEffectiveParentInfo(file, target);
+				const parentId = parentInfo.parentId;
 				if (!parentId) {
-					throw new Error(`Could not parse pageId from parent URL: ${target.parentUrl}`);
+					throw new Error(
+						`No parent page found for ${file.path}. Add confluence_parent_url or create a parent _index.md in the folder hierarchy.`,
+					);
 				}
+				this.deps.logger.info(`Resolved parent for ${file.path}: ${parentInfo.source} (${parentId})`);
 				const parent = await this.deps.api.getPage(parentId);
 				if (!parent.spaceKey) {
-					throw new Error(`Parent page is missing spaceKey: ${target.parentUrl}`);
+					throw new Error(`Parent page is missing spaceKey: ${parentId}`);
 				}
 				const title = file.basename;
 				this.deps.logger.info(`Creating child page: ${title} (parent=${parentId}, space=${parent.spaceKey})`);
