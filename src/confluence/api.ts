@@ -292,7 +292,16 @@ export class ConfluenceApi {
 
 		console.info('[ConfluenceApi] Using Electron session.fetch for attachment request');
 		const formData = new FormData();
-		formData.append('file', new File([new Blob([data], { type: mimeType })], filename, { type: mimeType }));
+		const blob = new Blob([data], { type: mimeType });
+		formData.append('file', blob, filename);
+
+		console.log('[ConfluenceApi] Attachment payload debug', {
+			filename,
+			mimeType,
+			formKeys: ['file'],
+			blobType: blob.type,
+			blobSize: blob.size,
+		});
 
 		const response = await this.sessionRequest({
 			method: 'POST',
