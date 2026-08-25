@@ -291,20 +291,13 @@ export class ConfluenceApi {
 		}
 
 		console.info('[ConfluenceApi] Using Electron session.fetch for attachment request');
-		const boundary = `----obsidian-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-		const body = new Blob([
-			`--${boundary}\r\n`,
-			`Content-Disposition: form-data; name="file"; filename="${filename.replace(/"/g, '\\"')}"\r\n`,
-			`Content-Type: ${mimeType}\r\n\r\n`,
-			new Uint8Array(data),
-			`\r\n--${boundary}--\r\n`,
-		], { type: 'application/octet-stream' });
+		const formData = new FormData();
+		formData.append('file', new File([new Blob([data], { type: mimeType })], filename, { type: mimeType }));
 
 		const response = await this.sessionRequest({
 			method: 'POST',
 			url,
-			contentType: `multipart/form-data; boundary=${boundary}`,
-			body,
+			body: formData,
 		});
 		return response;
 	}
@@ -353,7 +346,7 @@ export class ConfluenceApi {
 	private async sessionRequest(opts: {
 		method: string;
 		url: string;
-		body?: string | ArrayBuffer | Blob;
+		body?: string | ArrayBuffer | Blob | FormData;
 		contentType?: string;
 	}): Promise<{ status: number; text: string }> {
 		const status = getElectronRuntimeStatus();
