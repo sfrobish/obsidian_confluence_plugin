@@ -290,23 +290,31 @@ export class ConfluenceApi {
 			throw new ConfluenceApiError(0, 'network', reason);
 		}
 
-		console.info('[ConfluenceApi] Using Electron session.fetch for attachment request');
-		const formData = new FormData();
-		const blob = new Blob([data], { type: mimeType });
-		formData.append('file', blob, filename);
+		const boundary = `----obsidian-confluence-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+		const safeFilename = filename.replace(/"/g, '\\"');
+		const encoder = new TextEncoder();
+		const bodyParts: ArrayBuffer[] = [
+			encoder.encode(`--${boundary}\r\n`).buffer,
+			encoder.encode(`Content-Disposition: form-data; name="file"; filename="${safeFilename}"\r\n`).buffer,
+			encoder.encode(`Content-Type: ${mimeType}\r\n\r\n`).buffer,
+			data,
+			encoder.encode(`\r\n--${boundary}--\r\n`).buffer,
+		];
+		const multipartBody = new Blob(bodyParts);
+		const contentType = `multipart/form-data; boundary=${boundary}`;
 
-		console.log('[ConfluenceApi] Attachment payload debug', {
+		console.info('[ConfluenceApi] Attachment upload payload', {
 			filename,
 			mimeType,
-			formKeys: ['file'],
-			blobType: blob.type,
-			blobSize: blob.size,
+			contentType,
+			bodySize: multipartBody.size,
 		});
 
 		const response = await this.sessionRequest({
 			method: 'POST',
 			url,
-			body: formData,
+			body: multipartBody,
+			contentType,
 		});
 		return response;
 	}
