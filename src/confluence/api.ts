@@ -301,19 +301,20 @@ export class ConfluenceApi {
 			encoder.encode(`\r\n--${boundary}--\r\n`).buffer,
 		];
 		const multipartBody = new Blob(bodyParts);
+		const multipartBytes = new Uint8Array(await multipartBody.arrayBuffer());
 		const contentType = `multipart/form-data; boundary=${boundary}`;
 
 		console.info('[ConfluenceApi] Attachment upload payload', {
 			filename,
 			mimeType,
 			contentType,
-			bodySize: multipartBody.size,
+			bodySize: multipartBytes.byteLength,
 		});
 
 		const response = await this.sessionRequest({
 			method: 'POST',
 			url,
-			body: multipartBody,
+			body: multipartBytes,
 			contentType,
 		});
 		return response;
@@ -363,7 +364,7 @@ export class ConfluenceApi {
 	private async sessionRequest(opts: {
 		method: string;
 		url: string;
-		body?: string | ArrayBuffer | Blob | FormData;
+		body?: string | ArrayBuffer | Blob | FormData | Uint8Array;
 		contentType?: string;
 	}): Promise<{ status: number; text: string }> {
 		const status = getElectronRuntimeStatus();
