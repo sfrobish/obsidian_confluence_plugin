@@ -89,6 +89,7 @@ export interface PageInfo {
 	version: number;
 	type: string;
 	spaceKey?: string;
+	parentId?: string;
 }
 
 export interface UpdatePagePayload {
@@ -155,7 +156,7 @@ export class ConfluenceApi {
 	async getPage(pageId: string): Promise<PageInfo> {
 		const res = await this.sessionRequest({
 			method: 'GET',
-			url: `${this.baseUrl}/rest/api/content/${encodeURIComponent(pageId)}?expand=version,space`,
+			url: `${this.baseUrl}/rest/api/content/${encodeURIComponent(pageId)}?expand=version,space,ancestors`,
 		});
 		const data = JSON.parse(res.text) as {
 			id: string;
@@ -163,14 +164,34 @@ export class ConfluenceApi {
 			type: string;
 			version?: { number: number };
 			space?: { key: string };
+			ancestors?: Array<{ id: string }>;
 		};
+		const parentId = data.ancestors && data.ancestors.length > 0 ? data.ancestors[data.ancestors.length - 1]?.id : undefined;
 		return {
 			id: data.id,
 			title: data.title,
 			version: data.version?.number ?? 1,
 			type: data.type,
 			spaceKey: data.space?.key,
+			parentId,
 		};
+	}
+
+	/** Move a page under a different parent page. Useful when the vault folder hierarchy changed. */
+	async movePage(pageId: string, newParentId: string, title: string, version: number): Promise<void> {
+		const body = JSON.stringify({
+			id: pageId,
+			type: 'page',
+			title,
+			version: { number: version },
+			ancestors: [{ id: newParentId }],
+		});
+		await this.sessionRequest({
+			method: 'PUT',
+			url: `${this.baseUrl}/rest/api/content/${encodeURIComponent(pageId)}`,
+			contentType: 'application/json',
+			body,
+		});
 	}
 
 	/** POST to create a child page. Returns the new page ID and webui URL (used to write back frontmatter). */

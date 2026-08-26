@@ -561,17 +561,15 @@ export class SyncEngine {
 		return pageId ?? null;
 	}
 
-	private async resolveEffectiveParentInfo(file: TFile, target: SyncTarget): Promise<{ parentId: string | null; source: 'target' | 'folder' | 'none' }> {
-		const parentFromTarget = target.parentUrl ? parsePageIdFromUrl(target.parentUrl) ?? null : null;
-		if (parentFromTarget) {
-			return { parentId: parentFromTarget, source: 'target' };
-		}
-
+	private async resolveEffectiveParentInfo(file: TFile, target: SyncTarget): Promise<{ parentId: string | null; source: 'folder' | 'target' | 'none' }> {
 		const parentFromFolder = await this.resolveFolderParentPageId(file);
 		if (parentFromFolder) {
 			return { parentId: parentFromFolder, source: 'folder' };
 		}
-
+		const parentFromTarget = target.parentUrl ? parsePageIdFromUrl(target.parentUrl) ?? null : null;
+		if (parentFromTarget) {
+			return { parentId: parentFromTarget, source: 'target' };
+		}
 		return { parentId: null, source: 'none' };
 	}
 
@@ -655,6 +653,18 @@ export class SyncEngine {
 				url = created.webUrl;
 				createdNewPage = true;
 				this.deps.logger.info(`Created child page ${created.id}: ${created.webUrl}`);
+			}
+
+			if (pageId) {
+				const currentPage = await this.deps.api.getPage(pageId);
+				const expectedParentId = (await this.resolveEffectiveParentInfo(file, target)).parentId;
+				if (expectedParentId && currentPage.parentId && currentPage.parentId !== expectedParentId) {
+					this.deps.logger.warn(
+						`Reparenting stale Confluence page ${pageId}: current parent=${currentPage.parentId}, expected parent=${expectedParentId}`,
+					);
+					await this.deps.api.movePage(pageId, expectedParentId, file.basename, currentPage.version);
+					url = target.url || `${this.deps.instance.baseUrl}/pages/viewpage.action?pageId=${pageId}`;
+				}
 			}
 
 			if (!createdNewPage
