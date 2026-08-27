@@ -578,6 +578,12 @@ export class SyncEngine {
 			? file.path.split('/').slice(0, -1).join('/')
 			: '';
 
+		if (file.basename === '_index') {
+			current = current.includes('/')
+				? current.slice(0, current.lastIndexOf('/'))
+				: '';
+		}
+
 		while (current.length > 0) {
 			const indexPath = `${current}/_index.md`;
 			const indexFile = this.deps.app.vault.getAbstractFileByPath(indexPath);
@@ -662,17 +668,11 @@ export class SyncEngine {
 					this.deps.logger.warn(
 						`Reparenting stale Confluence page ${pageId}: current parent=${currentPage.parentId}, expected parent=${expectedParentId}`,
 					);
-					try {
-						await this.deps.api.movePage(pageId, expectedParentId, file.basename, currentPage.version);
-					} catch (e) {
-						if (e instanceof ConfluenceApiError && e.code === 'version_conflict') {
-							const refreshed = await this.deps.api.getPage(pageId);
-							this.deps.logger.warn(`Version conflict while reparenting; retrying with refreshed version: ${pageId}`);
-							await this.deps.api.movePage(pageId, expectedParentId, file.basename, refreshed.version);
-						} else {
-							throw e;
-						}
-					}
+					await this.retryWithFreshPageVersion(
+						pageId,
+						(version) => this.deps.api.movePage(pageId, expectedParentId, file.basename, version),
+						'Reparenting page',
+					);
 					url = target.url || `${this.deps.instance.baseUrl}/pages/viewpage.action?pageId=${pageId}`;
 				}
 			}
@@ -761,6 +761,26 @@ export class SyncEngine {
 		}
 	}
 
+	private async retryWithFreshPageVersion<T>(
+		pageId: string,
+		action: (pageVersion: number) => Promise<T>,
+		label: string,
+	): Promise<T> {
+		let page = await this.deps.api.getPage(pageId);
+		for (let attempt = 0; attempt < 3; attempt++) {
+			try {
+				return await action(page.version);
+			} catch (e) {
+				if (!(e instanceof ConfluenceApiError) || e.code !== 'version_conflict') {
+					throw e;
+				}
+				this.deps.logger.warn(`${label} hit a version conflict; refreshing the page version and retrying: ${pageId}`);
+				page = await this.deps.api.getPage(pageId);
+			}
+		}
+		return await action(page.version);
+	}
+
 	private async updatePageWithRetry(
 		pageId: string,
 		title: string,
@@ -768,25 +788,17 @@ export class SyncEngine {
 		currentVersion: number,
 		path: string,
 	): Promise<void> {
-		try {
-			await this.deps.api.updatePage(pageId, {
-				title,
-				storageXhtml,
-				newVersion: currentVersion + 1,
-			});
-		} catch (e) {
-			if (e instanceof ConfluenceApiError && e.code === 'version_conflict') {
-				this.deps.logger.warn(`Version conflict; re-fetching and retrying: ${path}`);
-				const refreshed = await this.deps.api.getPage(pageId);
+		await this.retryWithFreshPageVersion(
+			pageId,
+			async (pageVersion) => {
 				await this.deps.api.updatePage(pageId, {
 					title,
 					storageXhtml,
-					newVersion: refreshed.version + 1,
+					newVersion: pageVersion + 1,
 				});
-				return;
-			}
-			throw e;
-		}
+			},
+			`Updating page ${path}`,
+		);
 	}
 
 	private toTargetFailureResult(reason: unknown, target: SyncTarget, index: number): TargetSyncFailureResult {
