@@ -662,7 +662,17 @@ export class SyncEngine {
 					this.deps.logger.warn(
 						`Reparenting stale Confluence page ${pageId}: current parent=${currentPage.parentId}, expected parent=${expectedParentId}`,
 					);
-					await this.deps.api.movePage(pageId, expectedParentId, file.basename, currentPage.version);
+					try {
+						await this.deps.api.movePage(pageId, expectedParentId, file.basename, currentPage.version);
+					} catch (e) {
+						if (e instanceof ConfluenceApiError && e.code === 'version_conflict') {
+							const refreshed = await this.deps.api.getPage(pageId);
+							this.deps.logger.warn(`Version conflict while reparenting; retrying with refreshed version: ${pageId}`);
+							await this.deps.api.movePage(pageId, expectedParentId, file.basename, refreshed.version);
+						} else {
+							throw e;
+						}
+					}
 					url = target.url || `${this.deps.instance.baseUrl}/pages/viewpage.action?pageId=${pageId}`;
 				}
 			}

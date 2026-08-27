@@ -177,13 +177,13 @@ export class ConfluenceApi {
 		};
 	}
 
-	/** Move a page under a different parent page. Useful when the vault folder hierarchy changed. */
-	async movePage(pageId: string, newParentId: string, title: string, version: number): Promise<void> {
+	/** Move a page under a different parent page. Use the current live version + 1 because Confluence treats reparenting as a versioned update. */
+	async movePage(pageId: string, newParentId: string, title: string, currentVersion: number): Promise<void> {
 		const body = JSON.stringify({
 			id: pageId,
 			type: 'page',
 			title,
-			version: { number: version },
+			version: { number: currentVersion + 1 },
 			ancestors: [{ id: newParentId }],
 		});
 		await this.sessionRequest({
