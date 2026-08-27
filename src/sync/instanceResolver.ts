@@ -189,8 +189,14 @@ export class InstanceResolver {
 			if (indexFile instanceof TFile) {
 				const indexFm = (app.metadataCache.getFileCache(indexFile)?.frontmatter ?? {}) as Frontmatter;
 				const inherited = readTargetsFromFrontmatter(indexFm, frontmatterKey).targets;
-				if (inherited.some((target) => target.url.trim().length > 0 || target.parentUrl?.trim().length || target.pageId.trim().length > 0)) {
-					return inherited;
+				const routed = inherited.map((target) => ({
+					...target,
+					url: '',
+					parentUrl: target.parentUrl?.trim() || target.url.trim() || target.pageId.trim() || undefined,
+					pageId: '',
+				}));
+				if (routed.some((target) => (target.parentUrl?.trim().length ?? 0) > 0 || target.url.trim().length > 0 || target.pageId.trim().length > 0)) {
+					return routed;
 				}
 			}
 			current = current.includes('/')

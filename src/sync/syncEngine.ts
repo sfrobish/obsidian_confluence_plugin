@@ -181,9 +181,14 @@ export class SyncEngine {
 					this.deps.logger.info(`No direct frontmatter binding and no ancestor _index parent found for ${path}`);
 					return { path, skipped: true, success: false, error: 'Missing confluence_url / confluence_parent_url frontmatter and no ancestor _index.md parent was found' };
 				}
+				const inheritedTarget = await this.resolveInheritedTargetInfo(file);
 				this.deps.logger.info(`Leaf note ${path} has no direct binding; inherited parent page ${inheritedParentId} from nearest ancestor _index.md`);
 				binding = {
-					targets: [{ url: '', parentUrl: undefined, pageId: '' }],
+					targets: [{
+						url: '',
+						parentUrl: inheritedTarget?.parentUrl ?? inheritedTarget?.url ?? '',
+						pageId: '',
+					}],
 					_formats: { url: 'scalar', parentUrl: 'scalar', pageId: 'scalar' },
 				};
 			} else {
@@ -607,6 +612,36 @@ export class SyncEngine {
 			? folderPath.split('/').at(-1)
 			: folderPath;
 		return folderName && folderName.trim().length > 0 ? folderName : file.basename;
+	}
+
+	private async resolveInheritedTargetInfo(file: TFile): Promise<{ url: string; parentUrl?: string } | null> {
+		let current = file.path.includes('/')
+			? file.path.split('/').slice(0, -1).join('/')
+			: '';
+		if (file.basename === '_index') {
+			current = current.includes('/')
+				? current.slice(0, current.lastIndexOf('/'))
+				: '';
+		}
+		while (current.length > 0) {
+			const indexPath = `${current}/_index.md`;
+			const indexFile = this.deps.app.vault.getAbstractFileByPath(indexPath);
+			if (indexFile && indexFile instanceof TFile) {
+				const fm = this.deps.app.metadataCache.getFileCache(indexFile)?.frontmatter as Record<string, unknown> | undefined;
+				if (!fm) {
+					current = current.includes('/') ? current.slice(0, current.lastIndexOf('/')) : '';
+					continue;
+				}
+				const url = typeof fm.confluence_url === 'string' ? fm.confluence_url.trim() : '';
+				const parentUrl = typeof fm.confluence_parent_url === 'string' ? fm.confluence_parent_url.trim() : '';
+				const effectiveParent = parentUrl || url;
+				if (effectiveParent) return { url: '', parentUrl: effectiveParent };
+			}
+			current = current.includes('/')
+				? current.slice(0, current.lastIndexOf('/'))
+				: '';
+		}
+		return null;
 	}
 
 	private async resolveFolderParentPageId(file: TFile): Promise<string | null> {
