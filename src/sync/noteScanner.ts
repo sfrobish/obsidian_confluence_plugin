@@ -27,12 +27,12 @@ export function scanBoundNotes(app: App, opts: ScanOptions): TFile[] {
 		if (scanFolders.length > 0 && !scanFolders.some((f) => file.path === f || file.path.startsWith(f + '/'))) continue;
 		if (ignoreRegexes.some((r) => r.test(file.path))) continue;
 		const fm = app.metadataCache.getFileCache(file)?.frontmatter as Frontmatter | undefined;
-		if (!fm) continue;
 		const isIndexPage = file.basename === '_index';
 		const hasHierarchyAnchor = isIndexPage && hasConfluenceMetadata(fm);
 		const hasInheritedHierarchyAnchor = !hasHierarchyAnchor && hasAncestorHierarchyAnchor(app, file);
+		const hasDirectBinding = frontmatterHasBinding((fm ?? {}) as Frontmatter, opts.frontmatterKey);
 		// Sync only when the note has an explicit binding or it falls under a folder hierarchy that already has Confluence metadata.
-		if (!frontmatterHasBinding(fm, opts.frontmatterKey) && !hasHierarchyAnchor && !hasInheritedHierarchyAnchor) continue;
+		if (!hasDirectBinding && !hasHierarchyAnchor && !hasInheritedHierarchyAnchor) continue;
 		out.push(file);
 	}
 	return out;
