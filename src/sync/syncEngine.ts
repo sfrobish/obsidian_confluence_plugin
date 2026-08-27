@@ -526,11 +526,12 @@ export class SyncEngine {
 						targetUpdates.push({});
 						continue;
 					}
-					logger.info(`Pre-creating child page: ${file.basename} (parent=${resolvedParentId}, source=${parentInfo.source}, space=${parent.spaceKey})`);
+					const pageTitle = this.getConfluencePageTitle(file);
+					logger.info(`Pre-creating child page: ${pageTitle} (parent=${resolvedParentId}, source=${parentInfo.source}, space=${parent.spaceKey})`);
 					const created = await api.createPage({
 						spaceKey: parent.spaceKey,
 						parentId: resolvedParentId,
-						title: file.basename,
+						title: pageTitle,
 						storageXhtml: '<p>(syncing…)</p>',
 					});
 					targetUpdates.push({
@@ -571,6 +572,17 @@ export class SyncEngine {
 			return { parentId: parentFromTarget, source: 'target' };
 		}
 		return { parentId: null, source: 'none' };
+	}
+
+	private getConfluencePageTitle(file: TFile): string {
+		if (file.basename !== '_index') return file.basename;
+		const folderPath = file.path.includes('/')
+			? file.path.split('/').slice(0, -1).join('/')
+			: '';
+		const folderName = folderPath.includes('/')
+			? folderPath.split('/').at(-1)
+			: folderPath;
+		return folderName && folderName.trim().length > 0 ? folderName : file.basename;
 	}
 
 	private async resolveFolderParentPageId(file: TFile): Promise<string | null> {
@@ -647,7 +659,7 @@ export class SyncEngine {
 				if (!parent.spaceKey) {
 					throw new Error(`Parent page is missing spaceKey: ${parentId}`);
 				}
-				const title = file.basename;
+				const title = this.getConfluencePageTitle(file);
 				this.deps.logger.info(`Creating child page: ${title} (parent=${parentId}, space=${parent.spaceKey})`);
 				const created = await this.deps.api.createPage({
 					spaceKey: parent.spaceKey,
@@ -670,7 +682,7 @@ export class SyncEngine {
 					);
 					await this.retryWithFreshPageVersion(
 						pageId,
-						(version) => this.deps.api.movePage(pageId, expectedParentId, file.basename, version),
+						(version) => this.deps.api.movePage(pageId, expectedParentId, this.getConfluencePageTitle(file), version),
 						'Reparenting page',
 					);
 					url = target.url || `${this.deps.instance.baseUrl}/pages/viewpage.action?pageId=${pageId}`;
@@ -724,7 +736,7 @@ export class SyncEngine {
 			}
 
 			const page = await this.deps.api.getPage(pageId);
-			await this.updatePageWithRetry(pageId, file.basename, storageXhtml, page.version, file.path);
+			await this.updatePageWithRetry(pageId, this.getConfluencePageTitle(file), storageXhtml, page.version, file.path);
 
 			const mergedAttachments: Record<string, AttachmentRecord> = {
 				...previousAttachments,
