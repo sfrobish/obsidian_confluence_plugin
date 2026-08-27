@@ -174,8 +174,21 @@ export class SyncEngine {
 	private async syncFileInternal(file: TFile): Promise<FileSyncResult> {
 		const path = file.path;
 		try {
-			const binding = readBindingFromCache(this.deps.app, file, this.deps.settings.frontmatterKey);
-			if (!binding) return { path, skipped: true, success: false, error: 'Missing confluence_url / confluence_parent_url frontmatter' };
+			let binding = readBindingFromCache(this.deps.app, file, this.deps.settings.frontmatterKey);
+			if (!binding) {
+				const inheritedParentId = await this.resolveFolderParentPageId(file);
+				if (!inheritedParentId) {
+					this.deps.logger.info(`No direct frontmatter binding and no ancestor _index parent found for ${path}`);
+					return { path, skipped: true, success: false, error: 'Missing confluence_url / confluence_parent_url frontmatter and no ancestor _index.md parent was found' };
+				}
+				this.deps.logger.info(`Leaf note ${path} has no direct binding; inherited parent page ${inheritedParentId} from nearest ancestor _index.md`);
+				binding = {
+					targets: [{ url: '', parentUrl: undefined, pageId: '' }],
+					_formats: { url: 'scalar', parentUrl: 'scalar', pageId: 'scalar' },
+				};
+			} else {
+				this.deps.logger.info(`Leaf note ${path} has direct binding; syncing with explicit Confluence target metadata`);
+			}
 
 			const markdown = await this.deps.app.vault.cachedRead(file);
 			const resolveWikilink = this.makeWikilinkResolver();
@@ -495,8 +508,18 @@ export class SyncEngine {
 		const { app, api, settings, logger } = this.deps;
 		const instanceBaseUrl = this.deps.instance.baseUrl;
 		for (const file of files) {
-			const binding = readBindingFromCache(app, file, settings.frontmatterKey);
-			if (!binding) continue;
+			let binding = readBindingFromCache(app, file, settings.frontmatterKey);
+			if (!binding) {
+				const inheritedParentId = await this.resolveFolderParentPageId(file);
+				if (!inheritedParentId) continue;
+				logger.info(`Batch pre-create: ${file.path} has no direct binding; using inherited parent ${inheritedParentId} from ancestor _index.md`);
+				binding = {
+					targets: [{ url: '', parentUrl: undefined, pageId: '' }],
+					_formats: { url: 'scalar', parentUrl: 'scalar', pageId: 'scalar' },
+				};
+			} else {
+				logger.info(`Batch pre-create: ${file.path} has direct binding; using explicit target metadata`);
+			}
 
 			const targetUpdates: TargetBindingPatch[] = [];
 			let changed = false;
@@ -516,6 +539,7 @@ export class SyncEngine {
 				}
 				const parentInfo = await this.resolveEffectiveParentInfo(file, target);
 				const resolvedParentId = parentInfo.parentId ?? '';
+				this.deps.logger.info(`Resolved Confluence parent for ${file.path}: source=${parentInfo.source}, parentId=${resolvedParentId || '(none)'}`);
 				if (!resolvedParentId) {
 					targetUpdates.push({});
 					continue;
