@@ -1,15 +1,50 @@
 import { DiagramBlock } from './markdownConverter';
 import { Logger } from '../utils/logger';
 
+function getRuntimeLocationInfo(): string {
+	const bits: string[] = [];
+	try {
+		const runtimeDir = typeof __dirname !== 'undefined' ? __dirname : '(no __dirname)';
+		bits.push(`__dirname=${runtimeDir}`);
+	} catch {
+		bits.push('__dirname=unavailable');
+	}
+	try {
+		const currentDir = typeof process !== 'undefined' && process.cwd ? process.cwd() : '(no process.cwd)';
+		bits.push(`process.cwd=${currentDir}`);
+	} catch {
+		bits.push('process.cwd=unavailable');
+	}
+	try {
+		const mainFile = typeof require !== 'undefined' && require.main ? require.main.filename : '(no require.main)';
+		bits.push(`require.main=${mainFile}`);
+	} catch {
+		bits.push('require.main=unavailable');
+	}
+	try {
+		const winLoc = typeof window !== 'undefined' ? window.location?.href : '(no window)';
+		bits.push(`window.location=${winLoc}`);
+	} catch {
+		bits.push('window.location=unavailable');
+	}
+	return bits.join(' | ');
+}
+
 function ensureOfflineViewerLoaded(): void {
 	if (typeof window === 'undefined') return;
 	if ((window as any).GraphViewer && (window as any).mxUtils) return;
 
 	const candidatePaths = [
+		...(typeof __dirname !== 'undefined' ? [require('path').resolve(__dirname, 'viewer-static.min.cjs')] : []),
+		...(typeof __dirname !== 'undefined' ? [require('path').resolve(__dirname, '..', 'viewer-static.min.cjs')] : []),
 		'./viewer-static.min.cjs',
 		'../viewer-static.min.cjs',
 		'../../assets/viewer-static.min.cjs',
 	];
+
+	const runtimeInfo = getRuntimeLocationInfo();
+	console.info('[Draw.io] Offline viewer load context:', runtimeInfo);
+	console.info('[Draw.io] Loading viewer with candidate paths:', candidatePaths.join(', '));
 
 	for (const candidate of candidatePaths) {
 		try {
@@ -17,12 +52,12 @@ function ensureOfflineViewerLoaded(): void {
 			// the repo asset path is also valid. The viewer script mutates window and exposes GraphViewer/mxUtils.
 			require(candidate);
 			if ((window as any).GraphViewer && (window as any).mxUtils) return;
-		} catch {
-			// keep probing the next candidate
+		} catch (error) {
+			console.debug('[Draw.io] viewer candidate failed:', candidate, error);
 		}
 	}
 
-	console.warn('Draw.io viewer script is not available in this Obsidian session; checked:', candidatePaths.join(', '));
+	console.warn('[Draw.io] viewer script is not available in this Obsidian session; runtime context:', runtimeInfo, 'checked:', candidatePaths.join(', '));
 }
 
 export type RenderedDrawio = { block: DiagramBlock; svg: ArrayBuffer };
