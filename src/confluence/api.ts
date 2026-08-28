@@ -194,6 +194,52 @@ export class ConfluenceApi {
 		});
 	}
 
+	/** Delete a page. For destructive replacement, child pages are removed first to avoid orphaned descendants. */
+	async deletePage(pageId: string): Promise<void> {
+		await this.sessionRequest({
+			method: 'DELETE',
+			url: `${this.baseUrl}/rest/api/content/${encodeURIComponent(pageId)}`,
+		});
+	}
+
+	/** Recursively delete a page and all descendants, which keeps the remote hierarchy aligned with the vault tree. */
+	async deletePageTree(pageId: string): Promise<void> {
+		const children = await this.listChildPages(pageId);
+		for (const child of children) {
+			await this.deletePageTree(child.id);
+		}
+		try {
+			await this.deletePage(pageId);
+		} catch (e) {
+			if (e instanceof ConfluenceApiError && e.code === 'not_found') return;
+			throw e;
+		}
+	}
+
+	/** List immediate child pages for a page, used when rebuilding a page tree after a conflict. */
+	async listChildPages(pageId: string): Promise<PageInfo[]> {
+		const url = `${this.baseUrl}/rest/api/content/${encodeURIComponent(pageId)}/child/page?limit=100&expand=version,space,ancestors`;
+		const res = await this.sessionRequest({ method: 'GET', url });
+		const data = JSON.parse(res.text) as {
+			results?: Array<{
+				id: string;
+				title: string;
+				type: string;
+				version?: { number: number };
+				space?: { key: string };
+				ancestors?: Array<{ id: string }>;
+			}>;
+		};
+		return (data.results ?? []).map((item) => ({
+			id: item.id,
+			title: item.title,
+			type: item.type,
+			version: item.version?.number ?? 1,
+			spaceKey: item.space?.key,
+			parentId: item.ancestors && item.ancestors.length > 0 ? item.ancestors[item.ancestors.length - 1]?.id : undefined,
+		}));
+	}
+
 	/** POST to create a child page. Returns the new page ID and webui URL (used to write back frontmatter). */
 	async createPage(opts: {
 		spaceKey: string;

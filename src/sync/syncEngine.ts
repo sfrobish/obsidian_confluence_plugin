@@ -18,6 +18,7 @@ import { Logger } from '../utils/logger';
 import { SyncConfluenceSettings } from '../settings';
 import { AttachmentRecord, BatchSyncResult, FileSyncResult, NoteBinding, SyncTarget, ConfluenceInstance, PerInstanceUsernameMap } from '../types';
 import { InstanceResolver } from './instanceResolver';
+import { shouldReplaceRemotePageOnConflict } from './structureConflict';
 import { t } from '../i18n';
 
 export interface SyncEngineDeps {
@@ -748,16 +749,39 @@ export class SyncEngine {
 			if (pageId) {
 				const currentPage = await this.deps.api.getPage(pageId);
 				const expectedParentId = (await this.resolveEffectiveParentInfo(file, target)).parentId;
-				if (expectedParentId && currentPage.parentId && currentPage.parentId !== expectedParentId) {
+				const expectedTitle = this.getConfluencePageTitle(file);
+				if (shouldReplaceRemotePageOnConflict({
+					currentParentId: currentPage.parentId,
+					expectedParentId,
+					currentTitle: currentPage.title,
+					expectedTitle,
+					defaultBehavior: true,
+				})) {
 					this.deps.logger.warn(
-						`Reparenting stale Confluence page ${pageId}: current parent=${currentPage.parentId}, expected parent=${expectedParentId}`,
+						`Remote page ${pageId} conflicts with vault structure; deleting and recreating from vault: current parent=${currentPage.parentId ?? '(none)'}, expected parent=${expectedParentId ?? '(none)'}, current title=${currentPage.title}, expected title=${expectedTitle}`,
 					);
-					await this.retryWithFreshPageVersion(
-						pageId,
-						(version) => this.deps.api.movePage(pageId, expectedParentId, this.getConfluencePageTitle(file), version),
-						'Reparenting page',
-					);
-					url = target.url || `${this.deps.instance.baseUrl}/pages/viewpage.action?pageId=${pageId}`;
+					await this.deps.api.deletePageTree(pageId);
+					const parentInfo = await this.resolveEffectiveParentInfo(file, target);
+					const parentId = parentInfo.parentId;
+					if (!parentId) {
+						throw new Error(
+							`No parent page found for ${file.path}. Add confluence_parent_url or create a parent _index.md in the folder hierarchy.`,
+						);
+					}
+					const parent = await this.deps.api.getPage(parentId);
+					if (!parent.spaceKey) {
+						throw new Error(`Parent page is missing spaceKey: ${parentId}`);
+					}
+					const created = await this.deps.api.createPage({
+						spaceKey: parent.spaceKey,
+						parentId,
+						title: expectedTitle,
+						storageXhtml: '<p>(syncing…)</p>',
+					});
+					pageId = created.id;
+					url = created.webUrl;
+					createdNewPage = true;
+					this.deps.logger.info(`Recreated child page ${created.id}: ${created.webUrl}`);
 				}
 			}
 
