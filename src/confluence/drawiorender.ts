@@ -34,9 +34,15 @@ function ensureOfflineViewerLoaded(): void {
 	if (typeof window === 'undefined') return;
 	if ((window as any).GraphViewer && (window as any).mxUtils) return;
 
+	const path = require('path');
+	const runtimeHints = [] as string[];
+	if (typeof __dirname !== 'undefined') {
+		runtimeHints.push(path.resolve(__dirname, 'viewer-static.min.cjs'));
+		runtimeHints.push(path.resolve(__dirname, '..', 'viewer-static.min.cjs'));
+		runtimeHints.push(path.resolve(__dirname, '..', '..', 'assets', 'viewer-static.min.cjs'));
+	}
 	const candidatePaths = [
-		...(typeof __dirname !== 'undefined' ? [require('path').resolve(__dirname, 'viewer-static.min.cjs')] : []),
-		...(typeof __dirname !== 'undefined' ? [require('path').resolve(__dirname, '..', 'viewer-static.min.cjs')] : []),
+		...runtimeHints,
 		'./viewer-static.min.cjs',
 		'../viewer-static.min.cjs',
 		'../../assets/viewer-static.min.cjs',
@@ -50,7 +56,9 @@ function ensureOfflineViewerLoaded(): void {
 		try {
 			// In the packaged plugin, the asset is copied next to main.js in dist/. In source builds,
 			// the repo asset path is also valid. The viewer script mutates window and exposes GraphViewer/mxUtils.
-			require(candidate);
+			const resolved = path.isAbsolute(candidate) ? candidate : require.resolve(candidate);
+			console.info('[Draw.io] Trying viewer path:', resolved);
+			require(resolved);
 			if ((window as any).GraphViewer && (window as any).mxUtils) return;
 		} catch (error) {
 			console.debug('[Draw.io] viewer candidate failed:', candidate, error);
