@@ -30,35 +30,80 @@ function getRuntimeLocationInfo(): string {
 	return bits.join(' | ');
 }
 
+function getViewerCandidatePaths(): string[] {
+	const fs = require('fs');
+	const path = require('path');
+	const candidatePaths = new Set<string>();
+	const pluginId = 'ccx-publish-confluence';
+
+	const add = (...segments: string[]) => {
+		if (segments.length === 0) return;
+		candidatePaths.add(path.resolve(...segments));
+	};
+
+	try {
+		const { app } = require('electron');
+		if (app && typeof app.getPath === 'function') {
+			add(app.getPath('userData'), 'plugins', pluginId, 'viewer-static.min.cjs');
+			add(app.getPath('userData'), 'plugins', pluginId, 'dist', 'viewer-static.min.cjs');
+			add(app.getPath('userData'), 'plugins', pluginId, 'assets', 'viewer-static.min.cjs');
+			add(app.getPath('appData'), 'obsidian', 'plugins', pluginId, 'viewer-static.min.cjs');
+			add(app.getPath('appData'), 'obsidian', 'plugins', pluginId, 'dist', 'viewer-static.min.cjs');
+		}
+	} catch {
+		// Electron is not available in all runtimes; the fallback paths below still apply.
+	}
+
+	const appDataRoot = process.env.APPDATA ?? process.env.HOME ?? '';
+	if (appDataRoot) {
+		add(appDataRoot, 'obsidian', 'plugins', pluginId, 'viewer-static.min.cjs');
+		add(appDataRoot, 'obsidian', 'plugins', pluginId, 'dist', 'viewer-static.min.cjs');
+		add(appDataRoot, 'obsidian', 'plugins', pluginId, 'assets', 'viewer-static.min.cjs');
+	}
+
+	if (typeof process !== 'undefined' && typeof process.cwd === 'function') {
+		add(process.cwd(), 'dist', 'viewer-static.min.cjs');
+		add(process.cwd(), 'assets', 'viewer-static.min.cjs');
+	}
+
+	if (typeof __dirname !== 'undefined') {
+		add(__dirname, 'viewer-static.min.cjs');
+		add(__dirname, '..', 'viewer-static.min.cjs');
+		add(__dirname, '..', '..', 'assets', 'viewer-static.min.cjs');
+	}
+
+	candidatePaths.add('./viewer-static.min.cjs');
+	candidatePaths.add('../viewer-static.min.cjs');
+	candidatePaths.add('../../assets/viewer-static.min.cjs');
+
+	const sorted = Array.from(candidatePaths).filter((candidate) => typeof candidate === 'string' && candidate.length > 0);
+	return sorted.filter((candidate) => {
+		if (candidate.startsWith('.') || candidate.startsWith('/') || /^[A-Za-z]:\\/.test(candidate)) {
+			return true;
+		}
+		return true;
+	});
+}
+
 function ensureOfflineViewerLoaded(): void {
 	if (typeof window === 'undefined') return;
 	if ((window as any).GraphViewer && (window as any).mxUtils) return;
 
-	const path = require('path');
-	const runtimeHints = [] as string[];
-	if (typeof __dirname !== 'undefined') {
-		runtimeHints.push(path.resolve(__dirname, 'viewer-static.min.cjs'));
-		runtimeHints.push(path.resolve(__dirname, '..', 'viewer-static.min.cjs'));
-		runtimeHints.push(path.resolve(__dirname, '..', '..', 'assets', 'viewer-static.min.cjs'));
-	}
-	const candidatePaths = [
-		...runtimeHints,
-		'./viewer-static.min.cjs',
-		'../viewer-static.min.cjs',
-		'../../assets/viewer-static.min.cjs',
-	];
-
+	const fs = require('fs');
 	const runtimeInfo = getRuntimeLocationInfo();
+	const candidatePaths = getViewerCandidatePaths();
 	console.info('[Draw.io] Offline viewer load context:', runtimeInfo);
 	console.info('[Draw.io] Loading viewer with candidate paths:', candidatePaths.join(', '));
 
 	for (const candidate of candidatePaths) {
 		try {
-			// In the packaged plugin, the asset is copied next to main.js in dist/. In source builds,
-			// the repo asset path is also valid. The viewer script mutates window and exposes GraphViewer/mxUtils.
-			const resolved = path.isAbsolute(candidate) ? candidate : require.resolve(candidate);
-			console.info('[Draw.io] Trying viewer path:', resolved);
-			require(resolved);
+			const normalized = candidate.startsWith('.') ? candidate : candidate;
+			if (!fs.existsSync(normalized)) {
+				console.debug('[Draw.io] viewer candidate not found:', normalized);
+				continue;
+			}
+			console.info('[Draw.io] Trying viewer path:', normalized);
+			require(normalized);
 			if ((window as any).GraphViewer && (window as any).mxUtils) return;
 		} catch (error) {
 			console.debug('[Draw.io] viewer candidate failed:', candidate, error);
