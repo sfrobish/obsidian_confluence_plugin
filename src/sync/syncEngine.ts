@@ -131,14 +131,18 @@ export class SyncEngine {
 			this.deps.logger.warn('A sync task is already running; skipping this one');
 			return null;
 		}
+		const orderedFiles = [...files].sort((a, b) => {
+			const depthDelta = a.path.split('/').length - b.path.split('/').length;
+			return depthDelta === 0 ? a.path.localeCompare(b.path) : depthDelta;
+		});
 		this.busy = true;
 		try {
 			// Pass 1: pre-create placeholder pages for every target in the batch that does not yet have a pageId,
 			// so that when Pass 2 converts markdown, `[[wikilink]]` can resolve the peer's confluence_url.
-			await this.ensurePageIdsForBatch(files);
+			await this.ensurePageIdsForBatch(orderedFiles);
 
-			const result: BatchSyncResult = { total: files.length, updated: 0, skipped: 0, failed: 0, files: [] };
-			for (const file of files) {
+			const result: BatchSyncResult = { total: orderedFiles.length, updated: 0, skipped: 0, failed: 0, files: [] };
+			for (const file of orderedFiles) {
 				const r = await this.syncFileInternal(file);
 				result.files.push(r);
 				if (r.skipped) result.skipped += 1;
@@ -568,6 +572,15 @@ export class SyncEngine {
 						pageId: created.id,
 						url: created.webUrl,
 					});
+					if (file.basename === '_index') {
+						const fileParent = file.path.includes('/')
+							? file.path.split('/').slice(0, -1).join('/')
+							: '';
+						const parentPath = fileParent && fileParent.includes('/')
+							? fileParent.slice(0, fileParent.lastIndexOf('/'))
+							: '';
+						this.deps.logger.info(`Index page ${file.path} created at Confluence page ${created.id}; parent folder path=${fileParent || '(root)'}, ancestor parent path=${parentPath || '(root)'}`);
+					}
 					changed = true;
 				} catch (e) {
 					// Failure to pre-create a single target does not block the batch; the real Pass will try again and attach the error to that target.

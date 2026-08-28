@@ -35,7 +35,10 @@ export function scanBoundNotes(app: App, opts: ScanOptions): TFile[] {
 		if (!hasDirectBinding && !hasHierarchyAnchor && !hasInheritedHierarchyAnchor) continue;
 		out.push(file);
 	}
-	return out;
+	return out.sort((a, b) => {
+		const depthDelta = a.path.split('/').length - b.path.split('/').length;
+		return depthDelta === 0 ? a.path.localeCompare(b.path) : depthDelta;
+	});
 }
 
 function hasConfluenceMetadata(fm: Frontmatter | undefined): boolean {

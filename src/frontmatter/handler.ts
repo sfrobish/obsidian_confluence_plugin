@@ -40,7 +40,8 @@ export interface BindingPatch {
 
 /**
  * Read Confluence binding information from frontmatter.
- * Return non-null only when confluence_url or confluence_parent_url exists.
+ * Return non-null when the note has any direct Confluence binding,
+ * including a valid pageId for an already-created page.
  */
 export function readBindingFromCache(app: App, file: TFile, urlKey: string = FIELD.URL): NoteBinding | null {
 	const fm = app.metadataCache.getFileCache(file)?.frontmatter as Frontmatter | undefined;
@@ -218,7 +219,11 @@ function normalizeScalarValue(value: unknown): string {
 }
 
 function targetsHaveBinding(targets: SyncTarget[]): boolean {
-	return targets.some((target) => target.url.trim().length > 0 || (target.parentUrl?.trim().length ?? 0) > 0);
+	return targets.some((target) =>
+		target.url.trim().length > 0
+		|| (target.parentUrl?.trim().length ?? 0) > 0
+		|| target.pageId.trim().length > 0,
+	);
 }
 
 /**
