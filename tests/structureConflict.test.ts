@@ -13,15 +13,15 @@ describe('shouldReplaceRemotePageOnConflict', () => {
 		expect(result).toBe(true);
 	});
 
-	it('replaces when the title differs even if the parent matches', () => {
+	it('keeps a root page in place when there is no parent mismatch, even if the title differs', () => {
 		const result = shouldReplaceRemotePageOnConflict({
-			currentParentId: 'same-parent',
-			expectedParentId: 'same-parent',
+			currentParentId: undefined,
+			expectedParentId: undefined,
 			currentTitle: 'Old title',
 			expectedTitle: 'New title',
 			defaultBehavior: true,
 		});
-		expect(result).toBe(true);
+		expect(result).toBe(false);
 	});
 
 	it('keeps the existing update path when there is no structure mismatch', () => {
