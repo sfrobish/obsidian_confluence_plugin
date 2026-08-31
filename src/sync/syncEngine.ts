@@ -559,6 +559,10 @@ export class SyncEngine {
 						pageId = '';
 					}
 				}
+				const ensuredFolderParentId = await this.ensureImmediateFolderIndexPage(file);
+				if (ensuredFolderParentId) {
+					this.deps.logger.info(`Ensured immediate folder index page for ${file.path}: ${ensuredFolderParentId}`);
+				}
 				const parentInfo = await this.resolveEffectiveParentInfo(file, target);
 				const resolvedParentId = parentInfo.parentId ?? '';
 				this.deps.logger.info(`Resolved Confluence parent for ${file.path}: source=${parentInfo.source}, parentId=${resolvedParentId || '(none)'}`);
@@ -670,6 +674,45 @@ export class SyncEngine {
 		return null;
 	}
 
+	private async ensureImmediateFolderIndexPage(file: TFile): Promise<string | null> {
+		const folderPath = file.path.includes('/')
+			? file.path.split('/').slice(0, -1).join('/')
+			: '';
+		if (!folderPath) return null;
+
+		const indexPath = `${folderPath}/_index.md`;
+		const indexFile = this.deps.app.vault.getAbstractFileByPath(indexPath);
+		if (!(indexFile instanceof TFile)) return null;
+
+		const fm = this.deps.app.metadataCache.getFileCache(indexFile)?.frontmatter as Record<string, unknown> | undefined;
+		const pageId = this.resolveFrontmatterPageId(fm);
+		if (pageId) return pageId;
+
+		const parentId = await this.resolveFolderParentPageId(indexFile);
+		if (!parentId) return null;
+
+		const parent = await this.deps.api.getPage(parentId);
+		if (!parent.spaceKey) return null;
+
+		const created = await this.deps.api.createPage({
+			spaceKey: parent.spaceKey,
+			parentId,
+			title: this.getConfluencePageTitle(indexFile),
+			storageXhtml: '<p>(syncing…)</p>',
+		});
+
+		await writeBinding(this.deps.app, indexFile, {
+			targetUpdates: [{
+				parentUrl: '',
+				pageId: created.id,
+				url: created.webUrl,
+			}],
+			_formats: { url: 'scalar', parentUrl: 'scalar', pageId: 'scalar' },
+		}, this.deps.settings.frontmatterKey);
+
+		return created.id;
+	}
+
 	private async resolveFolderParentPageId(file: TFile): Promise<string | null> {
 		let current = file.path.includes('/')
 			? file.path.split('/').slice(0, -1).join('/')
@@ -696,32 +739,26 @@ export class SyncEngine {
 		return null;
 	}
 
-	private findExplicitSacredRootFile(file: TFile): TFile | null {
-		const fileFm = this.deps.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
-		if (file.basename === '_index' && fileFm && fileFm.confluence_root === true) {
-			return file;
-		}
-
-		let current = file.path.includes('/')
-			? file.path.split('/').slice(0, -1).join('/')
-			: '';
-		while (current.length > 0) {
-			const candidatePath = `${current}/_index.md`;
-			const candidate = this.deps.app.vault.getAbstractFileByPath(candidatePath);
-			if (candidate instanceof TFile) {
-				const fm = this.deps.app.metadataCache.getFileCache(candidate)?.frontmatter as Record<string, unknown> | undefined;
-				if (fm && fm.confluence_root === true) return candidate;
+	private findExplicitSacredRootFile(): TFile | null {
+		let sacredRoot: TFile | null = null;
+		for (const candidate of this.deps.app.vault.getMarkdownFiles()) {
+			const fm = this.deps.app.metadataCache.getFileCache(candidate)?.frontmatter as Record<string, unknown> | undefined;
+			if (fm && fm.confluence_root === true) {
+				if (sacredRoot) {
+					this.deps.logger.warn(
+						`Multiple sacred root files found: ${sacredRoot.path} and ${candidate.path}. Using ${sacredRoot.path} and ignoring the rest.`,
+					);
+					continue;
+				}
+				sacredRoot = candidate;
 			}
-			current = current.includes('/')
-				? current.slice(0, current.lastIndexOf('/'))
-				: '';
 		}
-		return null;
+		return sacredRoot;
 	}
 
 	private async isSacredRootPage(file: TFile, pageId: string): Promise<boolean> {
 		if (!pageId) return false;
-		const rootFile = this.findExplicitSacredRootFile(file);
+		const rootFile = this.findExplicitSacredRootFile();
 		if (!rootFile || rootFile.path !== file.path) return false;
 		const rootFm = this.deps.app.metadataCache.getFileCache(rootFile)?.frontmatter as Record<string, unknown> | undefined;
 		if (!rootFm || rootFm.confluence_root !== true) return false;
@@ -765,6 +802,7 @@ export class SyncEngine {
 		let createdNewPage = false;
 		try {
 			if (!pageId) {
+				await this.ensureImmediateFolderIndexPage(file);
 				const parentInfo = await this.resolveEffectiveParentInfo(file, target);
 				const parentId = parentInfo.parentId;
 				if (!parentId) {
@@ -808,7 +846,7 @@ export class SyncEngine {
 				if (currentPage) {
 					const expectedParentId = (await this.resolveEffectiveParentInfo(file, target)).parentId;
 					const expectedTitle = this.getConfluencePageTitle(file);
-					const rootFile = this.findExplicitSacredRootFile(file);
+					const rootFile = this.findExplicitSacredRootFile();
 					if (!rootFile) {
 						this.deps.logger.warn(
 							`No Confluence sacred root configured: no markdown file has confluence_root: true. Skipping destructive replace for ${file.path}.`,
