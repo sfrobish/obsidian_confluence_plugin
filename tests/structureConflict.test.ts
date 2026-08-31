@@ -2,6 +2,18 @@ import { describe, expect, it } from 'bun:test';
 import { shouldReplaceRemotePageOnConflict } from '../src/sync/structureConflict';
 
 describe('shouldReplaceRemotePageOnConflict', () => {
+	it('never replaces the topmost vault root binding when Confluence parentage disagrees', () => {
+		const result = shouldReplaceRemotePageOnConflict({
+			currentParentId: 'old-parent',
+			expectedParentId: 'new-parent',
+			currentTitle: 'Old title',
+			expectedTitle: 'New title',
+			sacredRootPage: true,
+			defaultBehavior: true,
+		});
+		expect(result).toBe(false);
+	});
+
 	it('replaces when the Confluence parent differs from the vault parent', () => {
 		const result = shouldReplaceRemotePageOnConflict({
 			currentParentId: 'old-parent',

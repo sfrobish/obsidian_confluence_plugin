@@ -698,21 +698,22 @@ export class SyncEngine {
 
 	private async isSacredRootPage(file: TFile, pageId: string): Promise<boolean> {
 		if (!pageId || file.basename !== '_index') return false;
+
 		let current = file.path.includes('/')
 			? file.path.split('/').slice(0, -1).join('/')
 			: '';
-		if (current.length === 0) return true;
+
 		while (current.length > 0) {
 			const ancestorPath = `${current}/_index.md`;
 			const ancestorFile = this.deps.app.vault.getAbstractFileByPath(ancestorPath);
 			if (ancestorFile instanceof TFile) {
-				const fm = this.deps.app.metadataCache.getFileCache(ancestorFile)?.frontmatter as Record<string, unknown> | undefined;
-				if (this.resolveFrontmatterPageId(fm)) return false;
+				return false;
 			}
 			current = current.includes('/')
 				? current.slice(0, current.lastIndexOf('/'))
 				: '';
 		}
+
 		return true;
 	}
 
