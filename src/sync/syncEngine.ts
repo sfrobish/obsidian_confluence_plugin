@@ -696,22 +696,37 @@ export class SyncEngine {
 		return null;
 	}
 
-	private findExplicitSacredRootFile(): TFile | null {
-		for (const candidate of this.deps.app.vault.getMarkdownFiles()) {
-			const fm = this.deps.app.metadataCache.getFileCache(candidate)?.frontmatter as Record<string, unknown> | undefined;
-			if (fm && fm.confluence_root === true) return candidate;
+	private findExplicitSacredRootFile(file: TFile): TFile | null {
+		const fileFm = this.deps.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+		if (file.basename === '_index' && fileFm && fileFm.confluence_root === true) {
+			return file;
+		}
+
+		let current = file.path.includes('/')
+			? file.path.split('/').slice(0, -1).join('/')
+			: '';
+		while (current.length > 0) {
+			const candidatePath = `${current}/_index.md`;
+			const candidate = this.deps.app.vault.getAbstractFileByPath(candidatePath);
+			if (candidate instanceof TFile) {
+				const fm = this.deps.app.metadataCache.getFileCache(candidate)?.frontmatter as Record<string, unknown> | undefined;
+				if (fm && fm.confluence_root === true) return candidate;
+			}
+			current = current.includes('/')
+				? current.slice(0, current.lastIndexOf('/'))
+				: '';
 		}
 		return null;
 	}
 
 	private async isSacredRootPage(file: TFile, pageId: string): Promise<boolean> {
 		if (!pageId) return false;
-		const rootFile = this.findExplicitSacredRootFile();
-		if (!rootFile) return false;
+		const rootFile = this.findExplicitSacredRootFile(file);
+		if (!rootFile || rootFile.path !== file.path) return false;
 		const rootFm = this.deps.app.metadataCache.getFileCache(rootFile)?.frontmatter as Record<string, unknown> | undefined;
 		if (!rootFm || rootFm.confluence_root !== true) return false;
 		const rootPageId = this.resolveFrontmatterPageId(rootFm);
-		return rootPageId === pageId && rootFile.path === file.path;
+		return rootPageId === pageId;
 	}
 
 	private async renderMermaidOnce(refs: ExtractedReferences): Promise<RenderedDiagram[]> {
@@ -793,7 +808,7 @@ export class SyncEngine {
 				if (currentPage) {
 					const expectedParentId = (await this.resolveEffectiveParentInfo(file, target)).parentId;
 					const expectedTitle = this.getConfluencePageTitle(file);
-					const rootFile = this.findExplicitSacredRootFile();
+					const rootFile = this.findExplicitSacredRootFile(file);
 					if (!rootFile) {
 						this.deps.logger.warn(
 							`No Confluence sacred root configured: no markdown file has confluence_root: true. Skipping destructive replace for ${file.path}.`,
