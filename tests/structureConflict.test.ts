@@ -24,6 +24,18 @@ describe('shouldReplaceRemotePageOnConflict', () => {
 		expect(result).toBe(false);
 	});
 
+	it('never replaces the sacred root binding itself', () => {
+		const result = shouldReplaceRemotePageOnConflict({
+			currentParentId: 'old-parent',
+			expectedParentId: 'new-parent',
+			currentTitle: 'Old title',
+			expectedTitle: 'New title',
+			sacredRootPage: true,
+			defaultBehavior: true,
+		});
+		expect(result).toBe(false);
+	});
+
 	it('keeps the existing update path when there is no structure mismatch', () => {
 		const result = shouldReplaceRemotePageOnConflict({
 			currentParentId: 'same-parent',

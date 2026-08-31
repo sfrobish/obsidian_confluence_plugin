@@ -3,15 +3,18 @@ export interface StructureConflictCheck {
 	expectedParentId?: string | null;
 	currentTitle?: string;
 	expectedTitle?: string;
+	sacredRootPage?: boolean;
 	defaultBehavior: boolean;
 }
 
 export function shouldReplaceRemotePageOnConflict({
 	currentParentId,
 	expectedParentId,
+	sacredRootPage,
 	defaultBehavior,
 }: StructureConflictCheck): boolean {
 	if (!defaultBehavior) return false;
+	if (sacredRootPage) return false;
 	const currentParent = currentParentId ?? '';
 	const expectedParent = expectedParentId ?? '';
 	if (expectedParent) {
