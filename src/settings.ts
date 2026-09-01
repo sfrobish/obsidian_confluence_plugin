@@ -40,8 +40,6 @@ export interface SyncConfluenceSettings {
 	/** kroki = use an external HTTP service to render PNG; obsidian = use Obsidian's built-in mermaid engine to render SVG */
 	mermaidRenderer: 'kroki' | 'obsidian';
 	mermaidRenderUrl: string;
-	renderPlantUmlToPng: boolean;
-	plantUmlServerUrl: string;
 	renderDrawioToSvg: boolean;
 }
 
@@ -70,8 +68,6 @@ export const DEFAULT_SETTINGS: SyncConfluenceSettings = {
 	renderMermaidToPng: true,
 	mermaidRenderer: 'kroki',
 	mermaidRenderUrl: 'https://kroki.io/mermaid/png',
-	renderPlantUmlToPng: false,
-	plantUmlServerUrl: 'https://www.plantuml.com/plantuml',
 	renderDrawioToSvg: true,
 };
 
@@ -300,27 +296,6 @@ export class SyncConfluenceSettingTab extends PluginSettingTab {
 							}));
 				}
 			}
-
-			new Setting(el)
-				.setName(t('settings.plantuml.toggleName'))
-				.setDesc(t('settings.plantuml.toggleDesc'))
-				.addToggle((tx) => tx.setValue(s.renderPlantUmlToPng).onChange(async (v) => {
-					s.renderPlantUmlToPng = v;
-					await this.plugin.saveSettings();
-					void this.plugin.rebuildSyncEngine();
-				}));
-
-			new Setting(el)
-				.setName(t('settings.plantuml.urlName'))
-				.setDesc(t('settings.plantuml.urlDesc'))
-				.addText((tx) => tx
-					.setPlaceholder('https://www.plantuml.com/plantuml')
-					.setValue(s.plantUmlServerUrl)
-					.onChange(async (v) => {
-						s.plantUmlServerUrl = v.trim() || DEFAULT_SETTINGS.plantUmlServerUrl;
-						await this.plugin.saveSettings();
-						void this.plugin.rebuildSyncEngine();
-					}));
 		});
 
 		// ===== UI behavior =====

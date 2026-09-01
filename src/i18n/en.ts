@@ -95,7 +95,7 @@ export const en = {
 			scope: 'Scan scope',
 			template: 'Note template',
 			attachments: 'Attachments',
-			diagrams: 'Diagram rendering (Mermaid / PlantUML / Draw.io)',
+			diagrams: 'Diagram rendering (Mermaid / Draw.io)',
 			ui: 'Notifications and status bar',
 		},
 		instances: {
@@ -191,7 +191,7 @@ export const en = {
 		},
 		defaultImageWidth: {
 			name: 'Default image display width (px)',
-			desc: 'Display width for regular images after syncing to Confluence. Defaults to 192px; use 0 for original size. This does not resize the uploaded source file or affect Mermaid / PlantUML diagrams.',
+			desc: 'Display width for regular images after syncing to Confluence. Defaults to 192px; use 0 for original size. This does not resize the uploaded source file or affect Mermaid diagrams.',
 		},
 		diagramsIntro:
 			'When enabled, matching code blocks are pre-rendered (locally or via a server) and uploaded as PNG attachments. When disabled, the code block is pushed as-is and rendered by a Confluence-side macro (or shown as source).',
@@ -212,12 +212,6 @@ export const en = {
 			obsidianCons: '✗ Cons: Output is SVG — Confluence Server 5.x and older may not render it inline; fonts follow your current theme, so remote viewers fall back to system defaults.',
 			urlName: 'Kroki service URL',
 			urlDesc: 'Full URL. Default https://kroki.io/mermaid/png (public instance); change to a self-hosted kroki for corporate networks. Change trailing /png to /svg to make kroki return SVG.',
-		},
-		plantuml: {
-			toggleName: 'PlantUML → PNG',
-			toggleDesc: 'Renders via a PlantUML server (defaults to the public plantuml.com instance, which is rate-limited)',
-			urlName: 'PlantUML server URL',
-			urlDesc: 'No trailing slash, e.g. https://www.plantuml.com/plantuml or a self-hosted instance',
 		},
 		showStatusBar: {
 			name: 'Show status bar',

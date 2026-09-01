@@ -104,7 +104,7 @@ export class AttachmentUploader {
 	}
 
 	/**
-	 * Sync arbitrary binary attachments (used by mermaid/plantuml renderers; data is in memory and has no TFile).
+	 * Sync arbitrary binary attachments (used by mermaid renderers; data is in memory and has no TFile).
 	 */
 	async uploadBytes(
 		pageId: string,

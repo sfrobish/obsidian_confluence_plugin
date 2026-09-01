@@ -12,11 +12,9 @@ describe('markdown Mermaid fence conversion', () => {
 		const ctx = {
 			attachedFilenames: new Set<string>(),
 			mermaidFilenameByHash: new Map(refs.mermaid.map((b) => [b.hash, b.filename])),
-			plantUmlFilenameByHash: new Map(),
 			drawioFilenameByHash: new Map(),
 			drawioFilenameByPath: new Map(),
 			renderMermaidToPng: true,
-			renderPlantUmlToPng: false,
 			renderDrawioToSvg: false,
 			defaultImageWidthPx: 0,
 			stripSupplementaryChars: false,

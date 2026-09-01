@@ -10,7 +10,6 @@ import {
 } from '../confluence/markdownConverter';
 import { AttachmentUploader } from '../confluence/attachmentUploader';
 import { IMermaidRenderer, KrokiMermaidRenderer, ObsidianMermaidRenderer } from '../confluence/mermaidRenderer';
-import { PlantUmlRenderer } from '../confluence/plantUmlRenderer';
 import { OfflineDrawioRenderer } from '../confluence/drawiorender';
 import { readBindingFromCache, writeBinding, getLastHashForTarget, TargetBindingPatch } from '../frontmatter/handler';
 import { scanBoundNotes } from './noteScanner';
@@ -89,7 +88,6 @@ export class SyncEngine {
 	private converter: MarkdownConverter;
 	private uploader: AttachmentUploader;
 	private mermaid: IMermaidRenderer | null = null;
-	private plantUml: PlantUmlRenderer | null = null;
 	private drawio: OfflineDrawioRenderer | null = null;
 	private busy = false;
 	private instanceResolver: InstanceResolver;
@@ -104,9 +102,6 @@ export class SyncEngine {
 			this.mermaid = deps.settings.mermaidRenderer === 'obsidian'
 				? new ObsidianMermaidRenderer(deps.app, deps.logger)
 				: new KrokiMermaidRenderer(deps.settings.mermaidRenderUrl, deps.logger);
-		}
-		if (deps.settings.renderPlantUmlToPng) {
-			this.plantUml = new PlantUmlRenderer(deps.settings.plantUmlServerUrl, deps.logger);
 		}
 		if (deps.settings.renderDrawioToSvg) {
 			this.drawio = new OfflineDrawioRenderer(deps.logger);
@@ -213,12 +208,9 @@ export class SyncEngine {
 				mermaidExt: this.mermaid?.extension(),
 			});
 			const mermaidRendered = await this.renderMermaidOnce(refs);
-			const plantUmlRendered = await this.renderPlantUmlOnce(refs);
 			const drawioRendered = await this.renderDrawioOnce(refs);
 			const mermaidFilenameByHash = new Map<string, string>();
 			for (const r of mermaidRendered) mermaidFilenameByHash.set(r.block.hash, r.block.filename);
-			const plantUmlFilenameByHash = new Map<string, string>();
-			for (const r of plantUmlRendered) plantUmlFilenameByHash.set(r.block.hash, r.block.filename);
 			const drawioFilenameByHash = new Map<string, string>();
 			const drawioFilenameByPath = new Map<string, string>();
 			for (const r of drawioRendered) {
@@ -232,16 +224,13 @@ export class SyncEngine {
 				}
 			}
 			for (const r of mermaidRendered) allAttachedFilenames.add(r.block.filename);
-			for (const r of plantUmlRendered) allAttachedFilenames.add(r.block.filename);
 			for (const r of drawioRendered) allAttachedFilenames.add(r.block.filename);
 			const ctx: ConvertContext = {
 				attachedFilenames: allAttachedFilenames,
 				mermaidFilenameByHash,
-				plantUmlFilenameByHash,
 				drawioFilenameByHash,
 				drawioFilenameByPath,
 				renderMermaidToPng: this.deps.settings.renderMermaidToPng,
-				renderPlantUmlToPng: this.deps.settings.renderPlantUmlToPng,
 				renderDrawioToSvg: this.deps.settings.renderDrawioToSvg,
 				defaultImageWidthPx: this.deps.settings.defaultImageWidthPx,
 				stripSupplementaryChars: this.deps.instance.stripSupplementaryChars,
@@ -297,7 +286,7 @@ export class SyncEngine {
 			}
 
 			const settled = await Promise.allSettled(filterIndex.map((index) =>
-				this.syncTarget(file, binding, binding.targets[index]!, index, contentHash, refs, mermaidRendered, plantUmlRendered, drawioRendered, storageXhtml),
+				this.syncTarget(file, binding, binding.targets[index]!, index, contentHash, refs, mermaidRendered, drawioRendered, storageXhtml),
 			));
 
 			const successful: TargetSyncSuccess[] = [];
@@ -758,12 +747,6 @@ export class SyncEngine {
 		return rendered.filter((r): r is RenderedDiagram => r !== null);
 	}
 
-	private async renderPlantUmlOnce(refs: ExtractedReferences): Promise<RenderedDiagram[]> {
-		if (!this.plantUml || refs.plantUml.length === 0) return [];
-		const rendered = await this.plantUml.renderAll(refs.plantUml);
-		return rendered.filter((r): r is RenderedDiagram => r !== null);
-	}
-
 	private async renderDrawioOnce(refs: ExtractedReferences): Promise<RenderedDiagram[]> {
 		if (!this.drawio || refs.drawio.length === 0) return [];
 		const rendered = await this.drawio.renderAll(refs.drawio);
@@ -778,7 +761,6 @@ export class SyncEngine {
 		contentHash: string,
 		refs: ExtractedReferences,
 		mermaidRendered: RenderedDiagram[],
-		plantUmlRendered: RenderedDiagram[],
 		drawioRendered: RenderedDiagram[],
 		storageXhtml: string,
 	): Promise<TargetSyncSuccess> {
@@ -914,12 +896,6 @@ export class SyncEngine {
 				if (rec) mermaidRecords[r.block.filename] = rec;
 			}
 
-			const plantUmlRecords: Record<string, AttachmentRecord> = {};
-			for (const r of plantUmlRendered) {
-				const rec = await this.uploader.uploadBytes(pageId, r.block.filename, r.png, previousAttachments);
-				if (rec) plantUmlRecords[r.block.filename] = rec;
-			}
-
 			const drawioRecords: Record<string, AttachmentRecord> = {};
 			for (const r of drawioRendered) {
 				const rec = await this.uploader.uploadBytes(pageId, r.block.filename, r.png, previousAttachments);
@@ -933,13 +909,11 @@ export class SyncEngine {
 				...previousAttachments,
 				...attachmentResult.map,
 				...mermaidRecords,
-				...plantUmlRecords,
 				...drawioRecords,
 			};
 			const stillReferenced = new Set<string>([
 				...Object.keys(attachmentResult.map),
 				...Object.keys(mermaidRecords),
-				...Object.keys(plantUmlRecords),
 				...Object.keys(drawioRecords),
 			]);
 			for (const k of Object.keys(mergedAttachments)) {
@@ -1034,9 +1008,6 @@ export class SyncEngine {
 		} else {
 			this.mermaid = null;
 		}
-		this.plantUml = this.deps.settings.renderPlantUmlToPng
-			? new PlantUmlRenderer(this.deps.settings.plantUmlServerUrl, this.deps.logger)
-			: null;
 		this.uploader = new AttachmentUploader(this.deps.app, this.deps.api, this.deps.logger, {
 			maxSizeBytes: Math.max(1, this.deps.settings.maxAttachmentSizeMB) * 1024 * 1024,
 		});

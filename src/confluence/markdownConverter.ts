@@ -16,7 +16,6 @@ export interface DiagramBlock {
 export interface ExtractedReferences {
 	attachments: AttachmentRef[];
 	mermaid: DiagramBlock[];
-	plantUml: DiagramBlock[];
 	drawio: DiagramBlock[];
 }
 
@@ -36,15 +35,12 @@ export interface ConvertContext {
 	attachedFilenames: Set<string>;
 	/** hash -> successfully uploaded mermaid PNG filename */
 	mermaidFilenameByHash: Map<string, string>;
-	/** hash -> successfully uploaded plantuml PNG filename */
-	plantUmlFilenameByHash: Map<string, string>;
 	/** hash -> successfully uploaded draw.io SVG filename */
 	drawioFilenameByHash: Map<string, string>;
 	/** source path -> successfully uploaded draw.io SVG filename (embedded local .drawio files) */
 	drawioFilenameByPath: Map<string, string>;
 	/** Configuration flags */
 	renderMermaidToPng: boolean;
-	renderPlantUmlToPng: boolean;
 	renderDrawioToSvg: boolean;
 	/** Default display width for ordinary attachment images on Confluence (px); 0 = original size */
 	defaultImageWidthPx: number;
@@ -75,8 +71,8 @@ interface PreprocessOptions {
  * markdown → Confluence storage XHTML converter.
  *
  * Usage:
- *   1. await extractReferences(markdown, sourcePath) — gather attachment + mermaid/plantuml lists
- *   2. Call AttachmentUploader / MermaidRenderer / PlantUmlRenderer to upload/render
+ *   1. await extractReferences(markdown, sourcePath) — gather attachment + mermaid lists
+ *   2. Call AttachmentUploader / MermaidRenderer to upload/render
  *   3. await convert(markdown, sourcePath, ctx) — render the final storage xhtml
  *
  * The work is split into two steps because rendering diagrams / uploading attachments is async + network-bound,
@@ -89,17 +85,16 @@ export class MarkdownConverter {
 	async extractReferences(
 		markdown: string,
 		sourcePath: string,
-		opts?: { mermaidExt?: 'svg' | 'png'; plantUmlExt?: 'svg' | 'png' },
+		opts?: { mermaidExt?: 'svg' | 'png' },
 	): Promise<ExtractedReferences> {
 		const body = stripFrontmatter(markdown);
 		const preprocessed = preprocessObsidianSyntax(body);
 
 		const attachments = this.collectAttachments(preprocessed, sourcePath);
 		const mermaid = await this.collectDiagrams(preprocessed, 'mermaid', opts?.mermaidExt ?? 'png');
-		const plantUml = await this.collectDiagrams(preprocessed, 'plantuml', opts?.plantUmlExt ?? 'png');
 		const drawio = await this.collectDrawio(preprocessed, sourcePath);
 
-		return { attachments, mermaid, plantUml, drawio };
+		return { attachments, mermaid, drawio };
 	}
 
 	async convert(markdown: string, sourcePath: string, ctx: ConvertContext): Promise<string> {
@@ -248,7 +243,7 @@ export class MarkdownConverter {
 
 	private async collectDiagrams(
 		markdown: string,
-		lang: 'mermaid' | 'plantuml' | 'drawio',
+		lang: 'mermaid' | 'drawio',
 		ext: 'svg' | 'png',
 	): Promise<DiagramBlock[]> {
 		const blocks = extractFenceBlocks(markdown).filter((b) => b.lang === lang);
@@ -269,7 +264,7 @@ export class MarkdownConverter {
 		const map = new Map<string, string>();
 		const blocks = extractFenceBlocks(markdown);
 		for (const b of blocks) {
-			if (b.lang !== 'mermaid' && b.lang !== 'plantuml' && b.lang !== 'drawio' && b.lang !== 'draw.io') continue;
+			if (b.lang !== 'mermaid' && b.lang !== 'drawio' && b.lang !== 'draw.io') continue;
 			const norm = b.content.replace(/\r/g, '').replace(/\n+$/, '');
 			const key = `${b.lang}|${norm}`;
 			if (map.has(key)) continue;
@@ -285,7 +280,7 @@ export class MarkdownConverter {
 		// fence: code blocks + diagrams
 		md.renderer.rules.fence = (tokens, idx) => {
 			const token = tokens[idx]!;
-			// `token.info` may be a whole string like `plantuml id=foo` with attributes,
+			// `token.info` may be a whole string like `mermaid id=foo` with attributes,
 			// so to match extractFenceBlocks / markdown-it conventions, only the first token is used as the lang.
 			const lang = (token.info || '').trim().split(/\s+/)[0]!.toLowerCase();
 			// markdown-it fence token content may end with a trailing newline; extractFenceBlocks strips it,
@@ -296,11 +291,6 @@ export class MarkdownConverter {
 			if (lang === 'mermaid' && ctx.renderMermaidToPng) {
 				const hash = fenceHashes.get(`mermaid|${content}`);
 				const filename = hash ? ctx.mermaidFilenameByHash.get(hash) : undefined;
-				if (filename) return renderAcImage(filename, '');
-			}
-			if (lang === 'plantuml' && ctx.renderPlantUmlToPng) {
-				const hash = fenceHashes.get(`plantuml|${content}`);
-				const filename = hash ? ctx.plantUmlFilenameByHash.get(hash) : undefined;
 				if (filename) return renderAcImage(filename, '');
 			}
 			if ((lang === 'drawio' || lang === 'draw.io') && ctx.renderDrawioToSvg) {

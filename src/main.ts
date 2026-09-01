@@ -786,11 +786,9 @@ export default class SyncConfluencePlugin extends Plugin {
 			const xhtml = await converter.convert(markdown, file.path, {
 				attachedFilenames: new Set(refs.attachments.map((r) => r.filename)),
 				mermaidFilenameByHash: new Map(refs.mermaid.map((b) => [b.hash, b.filename])),
-				plantUmlFilenameByHash: new Map(refs.plantUml.map((b) => [b.hash, b.filename])),
 				drawioFilenameByHash: new Map(refs.drawio.map((b) => [b.hash, b.filename])),
 				drawioFilenameByPath: new Map(refs.drawio.filter((b) => b.sourcePath).map((b) => [b.sourcePath!, b.filename])),
 				renderMermaidToPng: this.settings.renderMermaidToPng,
-				renderPlantUmlToPng: this.settings.renderPlantUmlToPng,
 				renderDrawioToSvg: this.settings.renderDrawioToSvg,
 				defaultImageWidthPx: this.settings.defaultImageWidthPx,
 				stripSupplementaryChars: matchedInst?.stripSupplementaryChars ?? false,

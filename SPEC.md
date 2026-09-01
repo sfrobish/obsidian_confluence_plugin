@@ -149,7 +149,7 @@ The markdown conversion layer in [src/confluence/markdownConverter.ts](src/confl
 - preprocesses Obsidian-specific syntax
 - masks inline code and fenced code blocks to avoid rewriting example syntax
 - extracts local attachment references
-- extracts Mermaid / PlantUML / Draw.io diagrams
+- extracts Mermaid / Draw.io diagrams
 - builds a final Confluence XHTML representation using MarkdownIt
 - replaces code fences with Confluence attachment images when rendering has succeeded
 - converts Obsidian-specific link forms to Confluence-friendly structures
@@ -175,7 +175,6 @@ The state model in [src/frontmatter/handler.ts](src/frontmatter/handler.ts):
 ### 6.7 Rendering adapters
 Renderer implementations live in:
 - [src/confluence/mermaidRenderer.ts](src/confluence/mermaidRenderer.ts)
-- [src/confluence/plantUmlRenderer.ts](src/confluence/plantUmlRenderer.ts)
 - [src/confluence/drawiorender.ts](src/confluence/drawiorender.ts)
 
 These follow a consistent pattern:
@@ -231,7 +230,6 @@ interface AttachmentRecord {
 3. It extracts references from the markdown:
    - local attachments
    - Mermaid blocks
-   - PlantUML blocks
    - Draw.io blocks
 4. It renders diagram content into image data.
 5. It uploads attachment and diagram data to the target page.
@@ -279,7 +277,7 @@ The current system is considered functional when:
 - page creation succeeds when no page exists
 - page update succeeds when content changes
 - local attachments are uploaded and referenced correctly
-- Mermaid / PlantUML / Draw.io render outputs are uploaded as attachments and linked in the page body
+- Mermaid / Draw.io render outputs are uploaded as attachments and linked in the page body
 - repeated syncs avoid redundant updates when content is unchanged
 - multiple Confluence instances do not overwrite each other’s state
 
