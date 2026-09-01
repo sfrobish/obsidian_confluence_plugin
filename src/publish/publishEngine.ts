@@ -10,7 +10,7 @@ import {
 } from '../confluence/markdownConverter';
 import { AttachmentUploader } from '../confluence/attachmentUploader';
 import { IMermaidRenderer, KrokiMermaidRenderer, ObsidianMermaidRenderer } from '../confluence/mermaidRenderer';
-import { OfflineDrawioRenderer } from '../confluence/drawiorender';
+import { renderAllDrawio } from '../confluence/drawiorender';
 import { readBindingFromCache, writeBinding, getLastHashForTarget, TargetBindingPatch } from '../frontmatter/handler';
 import { scanBoundNotes } from './noteScanner';
 import { Logger } from '../utils/logger';
@@ -88,7 +88,7 @@ export class PublishEngine {
 	private converter: MarkdownConverter;
 	private uploader: AttachmentUploader;
 	private mermaid: IMermaidRenderer | null = null;
-	private drawio: OfflineDrawioRenderer | null = null;
+	private drawioEnabled = false;
 	private busy = false;
 	private instanceResolver: InstanceResolver;
 
@@ -103,9 +103,7 @@ export class PublishEngine {
 				? new ObsidianMermaidRenderer(deps.app, deps.logger)
 				: new KrokiMermaidRenderer(deps.settings.mermaidRenderUrl, deps.logger);
 		}
-		if (deps.settings.renderDrawioToSvg) {
-			this.drawio = new OfflineDrawioRenderer(deps.logger);
-		}
+		this.drawioEnabled = deps.settings.renderDrawioToSvg;
 	}
 
 	isBusy(): boolean { return this.busy; }
@@ -748,8 +746,8 @@ export class PublishEngine {
 	}
 
 	private async renderDrawioOnce(refs: ExtractedReferences): Promise<RenderedDiagram[]> {
-		if (!this.drawio || refs.drawio.length === 0) return [];
-		const rendered = await this.drawio.renderAll(refs.drawio);
+		if (!this.drawioEnabled || refs.drawio.length === 0) return [];
+		const rendered = await renderAllDrawio(refs.drawio, this.deps.logger);
 		return rendered.flatMap((r) => r ? [{ block: r.block, png: r.svg }] : []);
 	}
 
