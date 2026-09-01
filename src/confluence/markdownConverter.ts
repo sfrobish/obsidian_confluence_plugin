@@ -135,14 +135,14 @@ export class MarkdownConverter {
 			sourcePath,
 		});
 		// Notes containing supplementary characters (emoji, etc.) are affected by the strip flag in the final output,
-		// but the hash is computed from markdown rather than output. Without a salt, pages previously synced in placeholder
+		// but the hash is computed from markdown rather than output. Without a salt, pages previously published in placeholder
 		// form would be permanently skipped because of the hash match, making the flag effectively useless. Only salt the
 		// affected notes: when the flag changes, only notes containing emoji are re-pushed; others still skip normally.
 		// When strip=true, do not salt so the old stored hashes from previous versions (which always stripped) remain compatible.
 		const hasSupplementary = /[\u{10000}-\u{10FFFF}]/u.test(preprocessed);
 		const supplementarySalt = !opts?.stripSupplementaryChars && hasSupplementary ? '\0keep-supplementary' : '';
 		// Display width changes the final storage XHTML and must be included in the hash; otherwise, changing only the setting would hit
-		// last_hash and skip the sync. Only salt notes that contain local images to avoid needless re-pushes for image-free pages.
+		// last_hash and skip the publish. Only salt notes that contain local images to avoid needless re-pushes for image-free pages.
 		const hasLocalImages = this.collectAttachments(preprocessed, sourcePath).length > 0;
 		const width = normalizeImageWidth(opts?.defaultImageWidthPx);
 		const imageWidthSalt = hasLocalImages ? `\0image-width:${width}` : '';
@@ -377,7 +377,7 @@ function stripFrontmatter(md: string): string {
 function preprocessObsidianSyntax(md: string, opts?: PreprocessOptions): string {
 	// First replace code regions (fenced + inline) with placeholders so ![[...]] / [[...]] in examples are not rewritten
 	const { masked, restore } = maskCodeRegions(md);
-	// `[!summary]+ Table of Contents` still appears as a handwritten table of contents in Obsidian; during sync it is converted to the official Confluence
+	// `[!summary]+ Table of Contents` still appears as a handwritten table of contents in Obsidian; during publish it is converted to the official Confluence
 	// TOC macro. This must happen after code regions are masked to avoid rewriting syntax examples in documents.
 	let s = replaceMarkdownTocCallouts(masked);
 

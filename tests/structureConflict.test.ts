@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { collectAncestorIndexPaths, shouldReplaceRemotePageOnConflict } from '../src/sync/structureConflict';
+import { collectAncestorIndexPaths, shouldReplaceRemotePageOnConflict } from '../src/publish/structureConflict';
 import { MarkdownConverter } from '../src/confluence/markdownConverter';
 
 (globalThis as any).window ??= { crypto: { subtle: crypto.subtle } };

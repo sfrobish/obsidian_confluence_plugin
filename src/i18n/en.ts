@@ -3,10 +3,10 @@
 export const en = {
 	// ===== Plugin-level =====
 	plugin: {
-		loading: 'Sync Confluence: loading…',
-		loaded: 'Sync Confluence: loaded',
-		unloaded: 'Sync Confluence: unloaded',
-		ribbonTooltip: 'Sync all notes to Confluence',
+		loading: 'Publish Confluence: loading…',
+		loaded: 'Publish Confluence: loaded',
+		unloaded: 'Publish Confluence: unloaded',
+		ribbonTooltip: 'Publish all notes to Confluence',
 	},
 
 	// ===== Notices (transient toast messages) =====
@@ -14,13 +14,13 @@ export const en = {
 		noteNotOpen: 'No active note',
 		noteNotBound: 'Note is not bound to Confluence',
 		fillAuthFirst: 'Please fill in Confluence credentials in Settings first',
-		syncResult: 'Sync Confluence: {summary}',
-		syncPartialFail: 'Sync Confluence partial failure: {summary}',
-		syncFailed: 'Sync Confluence failed: {summary}',
+		publishResult: 'Publish Confluence: {summary}',
+		publishPartialFail: 'Publish Confluence partial failure: {summary}',
+		publishFailed: 'Publish Confluence failed: {summary}',
 		folderNoBoundNotes: 'No bound notes under {folder}',
-		syncedNoChange: 'No change, skipped: {file}',
-		syncedOk: 'Synced: {file}',
-		syncedFail: 'Sync failed: {file}\n{error}',
+		publishedNoChange: 'No change, skipped: {file}',
+		publishedOk: 'Published: {file}',
+		publishedFail: 'Publish failed: {file}\n{error}',
 		frontmatterInserted: 'Frontmatter inserted; set confluence_url to the target page URL',
 		frontmatterInsertedShort: 'Frontmatter inserted',
 		frontmatterAlreadyExists: 'This note already has a confluence_url, skipped',
@@ -41,7 +41,7 @@ export const en = {
 		createFailed: 'Create failed: {error}',
 	},
 
-	// ===== Summary fragment (interpolated into notice.syncResult) =====
+	// ===== Summary fragment (interpolated into notice.publishResult) =====
 	summary: {
 		all: 'updated {updated} / skipped {skipped} / failed {failed}',
 		folder: '{folder}/: updated {updated} / skipped {skipped} / failed {failed}',
@@ -49,8 +49,8 @@ export const en = {
 
 	// ===== Commands =====
 	command: {
-		syncAll: 'Sync all notes',
-		syncCurrent: 'Sync current note',
+		publishAll: 'Publish all notes',
+		publishCurrent: 'Publish current note',
 		insertTemplate: 'Insert Confluence frontmatter into current note',
 		createBoundNote: 'Create bound note',
 		exportStoragePreview: 'Export storage preview of current note',
@@ -59,39 +59,39 @@ export const en = {
 
 	// ===== Context menus =====
 	menu: {
-		syncToConfluence: 'Sync to Confluence',
+		publishToConfluence: 'Publish to Confluence',
 		insertFrontmatter: 'Insert Confluence frontmatter',
-		syncFolder: 'Sync to Confluence (entire folder)',
+		publishFolder: 'Publish to Confluence (entire folder)',
 	},
 
 	// ===== Properties-panel row actions =====
 	propertyActions: {
-		sync: 'Sync to Confluence',
+		publish: 'Publish to Confluence',
 		open: 'Open in Confluence',
 	},
 
 	// ===== Status bar =====
 	status: {
 		idle: '☁ Idle',
-		syncing: '☁ Syncing',
-		success: '☁ Synced',
+		publishing: '☁ Publishing',
+		success: '☁ Published',
 		failed: '☁ Failed',
 		partial: '☁ Partial',
-		tooltipIdle: 'Sync Confluence: idle{lastSuffix}',
-		tooltipLastSync: ' — last sync: {time}',
-		tooltipSyncing: 'Sync Confluence: syncing…',
-		tooltipSuccess: 'Sync Confluence: synced — {time}',
-		tooltipFailed: 'Sync Confluence: failed',
-		tooltipFailedWithError: 'Sync failed: {error}',
-		tooltipPartial: 'Sync Confluence: partial — some instances failed',
-		syncingLabelPrefix: '☁ {text}',
+		tooltipIdle: 'Publish Confluence: idle{lastSuffix}',
+		tooltipLastPublish: ' — last publish: {time}',
+		tooltipPublishing: 'Publish Confluence: publishing…',
+		tooltipSuccess: 'Publish Confluence: published — {time}',
+		tooltipFailed: 'Publish Confluence: failed',
+		tooltipFailedWithError: 'Publish failed: {error}',
+		tooltipPartial: 'Publish Confluence: partial — some instances failed',
+		publishingLabelPrefix: '☁ {text}',
 	},
 
 	// ===== Settings tab =====
 	settings: {
 		section: {
 			auth: 'Confluence authentication',
-			schedule: 'Sync schedule',
+			schedule: 'Publish schedule',
 			scope: 'Scan scope',
 			template: 'Note template',
 			attachments: 'Attachments',
@@ -149,21 +149,21 @@ export const en = {
 		},
 		stripSupplementary: {
 			name: 'Legacy server compatibility: replace emoji with [U+XXXX]',
-			desc: 'Only for Confluence Server whose MySQL still uses 3-byte utf8 (sync fails with "Unsupported character found in content"). Replaces emoji and other supplementary characters with [U+XXXX] placeholders. Leave off for Cloud and utf8mb4 servers — emoji sync natively.',
+			desc: 'Only for Confluence Server whose MySQL still uses 3-byte utf8 (publish fails with "Unsupported character found in content"). Replaces emoji and other supplementary characters with [U+XXXX] placeholders. Leave off for Cloud and utf8mb4 servers — emoji publish natively.',
 		},
 		instanceSelect: {
 			label: 'Confluence instance',
 			desc: 'Select which instance to bind this note to',
 		},
 		interval: {
-			name: 'Sync interval (minutes)',
+			name: 'Publish interval (minutes)',
 			desc: '0 = disabled (manual only)',
 		},
-		syncOnStartup: {
-			name: 'Sync once on startup',
-			desc: 'Run a full sync 5 seconds after Obsidian launches',
+		publishOnStartup: {
+			name: 'Publish once on startup',
+			desc: 'Run a full publish 5 seconds after Obsidian launches',
 		},
-		syncNow: 'Sync all now',
+		publishNow: 'Publish all now',
 		scanFolders: {
 			name: 'Scan folders (optional)',
 			desc: 'One folder per line, relative to vault root. Empty = scan the whole vault.',
@@ -191,19 +191,19 @@ export const en = {
 		},
 		defaultImageWidth: {
 			name: 'Default image display width (px)',
-			desc: 'Display width for regular images after syncing to Confluence. Defaults to 192px; use 0 for original size. This does not resize the uploaded source file or affect Mermaid diagrams.',
+			desc: 'Display width for regular images after publishing to Confluence. Defaults to 192px; use 0 for original size. This does not resize the uploaded source file or affect Mermaid diagrams.',
 		},
 		diagramsIntro:
 			'When enabled, matching code blocks are pre-rendered (locally or via a server) and uploaded as PNG attachments. When disabled, the code block is pushed as-is and rendered by a Confluence-side macro (or shown as source).',
 		drawio: {
 			toggleName: 'Render Draw.io diagrams',
-			toggleDesc: 'When enabled, fenced draw.io XML blocks and embedded .drawio files are rendered offline to SVG attachments before sync. When disabled, the raw XML/source is pushed as-is.',
+			toggleDesc: 'When enabled, fenced draw.io XML blocks and embedded .drawio files are rendered offline to SVG attachments before publish. When disabled, the raw XML/source is pushed as-is.',
 		},
 		mermaid: {
 			toggleName: 'Render Mermaid diagrams',
-			toggleDesc: 'When enabled, mermaid code blocks are pre-rendered to image attachments before sync. When disabled, the mermaid source is pushed as-is and rendered by a Confluence-side macro (or shown as code).',
+			toggleDesc: 'When enabled, mermaid code blocks are pre-rendered to image attachments before publish. When disabled, the mermaid source is pushed as-is and rendered by a Confluence-side macro (or shown as code).',
 			rendererName: 'Renderer',
-			rendererDesc: 'Both modes have trade-offs; pick by your Confluence version / network. Switching regenerates all mermaid attachments on next sync.',
+			rendererDesc: 'Both modes have trade-offs; pick by your Confluence version / network. Switching regenerates all mermaid attachments on next publish.',
 			rendererKroki: 'Kroki remote service (PNG)',
 			rendererObsidian: 'Obsidian built-in engine (SVG)',
 			krokiPros: '✓ Pros: Full font coverage (CJK + emoji), best compatibility with older Confluence Server, identical render across devices.',
@@ -218,7 +218,7 @@ export const en = {
 		},
 		showNotice: {
 			name: 'Show notices',
-			desc: 'Pop a Notice when a sync finishes or fails',
+			desc: 'Pop a Notice when a publish finishes or fails',
 		},
 		frontmatterKey: {
 			name: 'Frontmatter key name',
@@ -247,10 +247,10 @@ export const en = {
 		template: {
 			title: '# Title',
 			usage:
-				'> Pick one of two flows:\n> 1. Existing Confluence page → put the page URL in `confluence_url`\n> 2. No page yet → put the **parent** page URL in `confluence_parent_url` (supports array for multi-parent sync). On first sync, the plugin will create a child page named after this note, then write the new URL back to `confluence_url`.\n> The other fields (page_id / last_synced / last_hash) are maintained automatically.',
+				'> Pick one of two flows:\n> 1. Existing Confluence page → put the page URL in `confluence_url`\n> 2. No page yet → put the **parent** page URL in `confluence_parent_url` (supports array for multi-parent publish). On first publish, the plugin will create a child page named after this note, then write the new URL back to `confluence_url`.\n> The other fields (page_id / last_published / last_hash) are maintained automatically.',
 			bodyHeading: '## Body',
 			bodyPlaceholder: 'Write here…',
-			syncingPlaceholder: '<p>(syncing…)</p>',
+			publishingPlaceholder: '<p>(publishing…)</p>',
 		},
 };
 

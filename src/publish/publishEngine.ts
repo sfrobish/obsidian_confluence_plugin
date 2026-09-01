@@ -14,20 +14,20 @@ import { OfflineDrawioRenderer } from '../confluence/drawiorender';
 import { readBindingFromCache, writeBinding, getLastHashForTarget, TargetBindingPatch } from '../frontmatter/handler';
 import { scanBoundNotes } from './noteScanner';
 import { Logger } from '../utils/logger';
-import { SyncConfluenceSettings } from '../settings';
-import { AttachmentRecord, BatchSyncResult, FileSyncResult, NoteBinding, SyncTarget, ConfluenceInstance, PerInstanceUsernameMap } from '../types';
+import { PublishConfluenceSettings } from '../settings';
+import { AttachmentRecord, BatchPublishResult, FilePublishResult, NoteBinding, PublishTarget, ConfluenceInstance, PerInstanceUsernameMap } from '../types';
 import { InstanceResolver } from './instanceResolver';
 import { collectAncestorIndexPaths, shouldReplaceRemotePageOnConflict } from './structureConflict';
 import { t } from '../i18n';
 
-export interface SyncEngineDeps {
+export interface PublishEngineDeps {
 	app: App;
-	settings: SyncConfluenceSettings;
+	settings: PublishConfluenceSettings;
 	logger: Logger;
 	api: ConfluenceApi;
 	/**
 	 * The ConfluenceInstance this engine owns — its credentials and API are
-	 * used. The engine only syncs targets whose URL longest-prefix matches
+	 * used. The engine only publishes targets whose URL longest-prefix matches
 	 * this instance, taking every other configured instance into account
 	 * (see `instanceResolver`). Required: after `migrateLegacySettings` the
 	 * plugin always has at least one configured instance.
@@ -44,7 +44,7 @@ export interface SyncEngineDeps {
 
 type RenderedDiagram = { block: DiagramBlock; png: ArrayBuffer };
 
-interface TargetSyncSuccess {
+interface TargetPublishSuccess {
 	index: number;
 	parentUrl?: string;
 	pageId: string;
@@ -57,7 +57,7 @@ interface TargetSyncSuccess {
 	attachments?: Record<string, AttachmentRecord>;
 }
 
-interface TargetSyncFailureResult {
+interface TargetPublishFailureResult {
 	index: number;
 	parentUrl?: string;
 	pageId: string;
@@ -66,25 +66,25 @@ interface TargetSyncFailureResult {
 	error: string;
 }
 
-class TargetSyncFailure extends Error {
+class TargetPublishFailure extends Error {
 	constructor(
 		message: string,
 		public index: number,
-		public target: SyncTarget,
+		public target: PublishTarget,
 		public pageId: string,
 		public url: string,
 	) {
 		super(message);
-		this.name = 'TargetSyncFailure';
+		this.name = 'TargetPublishFailure';
 	}
 }
 
 /**
- * Sync engine. Responsible for: scan → orchestrate single-file pipeline (attachment upload / diagram rendering / markdown conversion / push / write back frontmatter)
+ * Publish engine. Responsible for: scan → orchestrate single-file pipeline (attachment upload / diagram rendering / markdown conversion / push / write back frontmatter)
  *
- * Reentrancy guard: isSyncing flag. SyncAll and SyncOne share the same lock to avoid timer and manual-trigger overlap.
+ * Reentrancy guard: isBusy flag. PublishAll and PublishOne share the same lock to avoid timer and manual-trigger overlap.
  */
-export class SyncEngine {
+export class PublishEngine {
 	private converter: MarkdownConverter;
 	private uploader: AttachmentUploader;
 	private mermaid: IMermaidRenderer | null = null;
@@ -92,7 +92,7 @@ export class SyncEngine {
 	private busy = false;
 	private instanceResolver: InstanceResolver;
 
-	constructor(private deps: SyncEngineDeps) {
+	constructor(private deps: PublishEngineDeps) {
 		this.instanceResolver = new InstanceResolver({ instances: deps.instances });
 		this.converter = new MarkdownConverter(deps.app);
 		this.uploader = new AttachmentUploader(deps.app, deps.api, deps.logger, {
@@ -110,21 +110,21 @@ export class SyncEngine {
 
 	isBusy(): boolean { return this.busy; }
 
-	/** Scan the entire vault and sync all bound notes. */
-	async syncAll(): Promise<BatchSyncResult | null> {
+	/** Scan the entire vault and publish all bound notes. */
+	async publishAll(): Promise<BatchPublishResult | null> {
 		const files = scanBoundNotes(this.deps.app, {
 			frontmatterKey: this.deps.settings.frontmatterKey,
 			scanFolders: this.deps.settings.scanFolders,
 			ignorePatterns: this.deps.settings.ignorePatterns,
 		});
 		this.deps.logger.info(`Found ${files.length} bound notes`);
-		return this.syncFiles(files);
+		return this.publishFiles(files);
 	}
 
-	/** Sync a given set of files (shared by syncAll / syncFolder / future selection sync scenarios). */
-	async syncFiles(files: TFile[]): Promise<BatchSyncResult | null> {
+	/** Publish a given set of files (shared by publishAll / publishFolder / future selection publish scenarios). */
+	async publishFiles(files: TFile[]): Promise<BatchPublishResult | null> {
 		if (this.busy) {
-			this.deps.logger.warn('A sync task is already running; skipping this one');
+			this.deps.logger.warn('A publish task is already running; skipping this one');
 			return null;
 		}
 		const orderedFiles = [...files].sort((a, b) => {
@@ -137,41 +137,41 @@ export class SyncEngine {
 			// so that when Pass 2 converts markdown, `[[wikilink]]` can resolve the peer's confluence_url.
 			await this.ensurePageIdsForBatch(orderedFiles);
 
-			const result: BatchSyncResult = { total: orderedFiles.length, updated: 0, skipped: 0, failed: 0, files: [] };
+			const result: BatchPublishResult = { total: orderedFiles.length, updated: 0, skipped: 0, failed: 0, files: [] };
 			for (const file of orderedFiles) {
-				const r = await this.syncFileInternal(file);
+				const r = await this.publishFileInternal(file);
 				result.files.push(r);
 				if (r.skipped) result.skipped += 1;
 				else if (r.success) result.updated += 1;
 				else result.failed += 1;
 			}
 			this.deps.logger.info(
-				`Sync complete: updated ${result.updated} / skipped ${result.skipped} / failed ${result.failed}`,
+				`Publish complete: updated ${result.updated} / skipped ${result.skipped} / failed ${result.failed}`,
 			);
-			this.deps.logger.recordSyncTime();
+			this.deps.logger.recordPublishTime();
 			return result;
 		} finally {
 			this.busy = false;
 		}
 	}
 
-	/** Sync a single file. */
-	async syncOne(file: TFile): Promise<FileSyncResult | null> {
+	/** Publish a single file. */
+	async publishOne(file: TFile): Promise<FilePublishResult | null> {
 		if (this.busy) {
-			this.deps.logger.warn('A sync task is already running; skipping this one');
+			this.deps.logger.warn('A publish task is already running; skipping this one');
 			return null;
 		}
 		this.busy = true;
 		try {
-			const r = await this.syncFileInternal(file);
-			this.deps.logger.recordSyncTime();
+			const r = await this.publishFileInternal(file);
+			this.deps.logger.recordPublishTime();
 			return r;
 		} finally {
 			this.busy = false;
 		}
 	}
 
-	private async syncFileInternal(file: TFile): Promise<FileSyncResult> {
+	private async publishFileInternal(file: TFile): Promise<FilePublishResult> {
 		const path = file.path;
 		try {
 			let binding = readBindingFromCache(this.deps.app, file, this.deps.settings.frontmatterKey);
@@ -192,7 +192,7 @@ export class SyncEngine {
 					_formats: { url: 'scalar', parentUrl: 'scalar', pageId: 'scalar' },
 				};
 			} else {
-				this.deps.logger.info(`Leaf note ${path} has direct binding; syncing with explicit Confluence target metadata`);
+				this.deps.logger.info(`Leaf note ${path} has direct binding; publishing with explicit Confluence target metadata`);
 			}
 
 			const markdown = await this.deps.app.vault.cachedRead(file);
@@ -242,7 +242,7 @@ export class SyncEngine {
 			// Multi-instance: partition index-aligned targets for this engine.
 			// Foreign targets do not count as failures; partially unmatched targets
 			// are assigned to one matched engine so they cannot disappear silently.
-			type PerTargetEntry = NonNullable<FileSyncResult['perTarget']>[number];
+			type PerTargetEntry = NonNullable<FilePublishResult['perTarget']>[number];
 			const perTarget: PerTargetEntry[] = binding.targets.map(() => ({
 				pageId: '',
 				url: '',
@@ -286,10 +286,10 @@ export class SyncEngine {
 			}
 
 			const settled = await Promise.allSettled(filterIndex.map((index) =>
-				this.syncTarget(file, binding, binding.targets[index]!, index, contentHash, refs, mermaidRendered, drawioRendered, storageXhtml),
+				this.publishTarget(file, binding, binding.targets[index]!, index, contentHash, refs, mermaidRendered, drawioRendered, storageXhtml),
 			));
 
-			const successful: TargetSyncSuccess[] = [];
+			const successful: TargetPublishSuccess[] = [];
 			settled.forEach((result, index) => {
 				const originalIndex = filterIndex[index]!;
 				if (result.status === 'fulfilled') {
@@ -353,13 +353,13 @@ export class SyncEngine {
 				if (!needsWriteback) {
 					// All-owned-skipped pure hash-match: no frontmatter write. The
 					// existing per-instance hash slice already records the cached
-					// value, so future syncs continue to skip correctly.
+					// value, so future publishes continue to skip correctly.
 				} else {
 					const patch: Parameters<typeof writeBinding>[2] = { targetUpdates };
 					patch._formats = binding._formats;
 					const instanceId = this.deps.instance.id;
 					if (anyUpdated) {
-						if (failures.length === 0) patch.lastSynced = new Date().toISOString();
+						if (failures.length === 0) patch.lastPublished = new Date().toISOString();
 						const myHash: Record<string, string> = {};
 						for (const e of updatedHashEntries) myHash[e.pageId] = e.hash;
 						patch.lastHashDelta = { [instanceId]: myHash };
@@ -378,9 +378,9 @@ export class SyncEngine {
 			const failedAttachments = successful.reduce((sum, target) => sum + target.failedAttachments, 0);
 			const skipped = failures.length === 0 && successful.every((target) => target.skipped);
 			if (failures.length === 0) {
-				this.deps.logger.info(`Synced: ${path}`, `targets ${successful.length}, attachments uploaded ${uploadedAttachments} / reused ${skippedAttachments} / failed ${failedAttachments}`);
+				this.deps.logger.info(`Published: ${path}`, `targets ${successful.length}, attachments uploaded ${uploadedAttachments} / reused ${skippedAttachments} / failed ${failedAttachments}`);
 			} else {
-				this.deps.logger.warn(`Some target syncs failed: ${path}`, failures.map((target) => target.error ?? '').join('\n'));
+				this.deps.logger.warn(`Some target publishes failed: ${path}`, failures.map((target) => target.error ?? '').join('\n'));
 			}
 			return {
 				path,
@@ -393,7 +393,7 @@ export class SyncEngine {
 			};
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
-			this.deps.logger.error(`Sync failed: ${path}`, msg);
+			this.deps.logger.error(`Publish failed: ${path}`, msg);
 			return { path, skipped: false, success: false, error: msg };
 		}
 	}
@@ -416,7 +416,7 @@ export class SyncEngine {
 	 * engines. Missing key → null → markdownConverter degrades to plain
 	 * `@Name`.
 	 *
-	 * Intentionally does NOT hit the Confluence user API — sync is a
+	 * Intentionally does NOT hit the Confluence user API — publish is a
 	 * scheduled/batch background job, and inline network lookups or
 	 * interactive pickers would block the whole batch. Maintain
 	 * `confluence_username` once per person note and it works offline
@@ -453,10 +453,10 @@ export class SyncEngine {
 	 * confluence_url is authoritative once present. parentUrl participates
 	 * only while url is empty and the child page still needs to be created.
 	 *
-	 * Without instances[] the engine syncs every target (legacy single-
+	 * Without instances[] the engine publishes every target (legacy single-
 	 * instance mode).
 	 */
-	private targetBelongsToInstance(target: SyncTarget, instanceBaseUrl: string): boolean {
+	private targetBelongsToInstance(target: PublishTarget, instanceBaseUrl: string): boolean {
 		if (!instanceBaseUrl) return true;
 		return this.instanceResolver.resolveTarget(target)?.id === this.deps.instance.id;
 	}
@@ -497,11 +497,11 @@ export class SyncEngine {
 	}
 
 	/**
-	 * Batch pre-sync step: for each target that does not yet have a pageId, create a placeholder page in advance,
+	 * Batch pre-publish step: for each target that does not yet have a pageId, create a placeholder page in advance,
 	 * and write back confluence_url / confluence_page_id to frontmatter,
-	 * so the wikilink resolver can find the peer URL during the actual sync.
+	 * so the wikilink resolver can find the peer URL during the actual publish.
 	 *
-	 * Only creates placeholders; it does not update content (the placeholder "(syncing…)" is overwritten in the subsequent Pass 2).
+	 * Only creates placeholders; it does not update content (the placeholder "(publishing…)" is overwritten in the subsequent Pass 2).
 	 */
 	private async ensurePageIdsForBatch(files: TFile[]): Promise<void> {
 		const { app, api, settings, logger } = this.deps;
@@ -571,7 +571,7 @@ export class SyncEngine {
 						spaceKey: parent.spaceKey,
 						parentId: resolvedParentId,
 						title: pageTitle,
-						storageXhtml: '<p>(syncing…)</p>',
+						storageXhtml: '<p>(publishing…)</p>',
 					});
 					targetUpdates.push({
 						parentUrl: target.parentUrl || undefined,
@@ -610,7 +610,7 @@ export class SyncEngine {
 		return pageId ?? null;
 	}
 
-	private async resolveEffectiveParentInfo(file: TFile, target: SyncTarget): Promise<{ parentId: string | null; source: 'folder' | 'target' | 'none' }> {
+	private async resolveEffectiveParentInfo(file: TFile, target: PublishTarget): Promise<{ parentId: string | null; source: 'folder' | 'target' | 'none' }> {
 		const parentFromFolder = await this.resolveFolderParentPageId(file);
 		if (parentFromFolder) {
 			return { parentId: parentFromFolder, source: 'folder' };
@@ -687,7 +687,7 @@ export class SyncEngine {
 			spaceKey: parent.spaceKey,
 			parentId,
 			title: this.getConfluencePageTitle(indexFile),
-			storageXhtml: '<p>(syncing…)</p>',
+			storageXhtml: '<p>(publishing…)</p>',
 		});
 
 		await writeBinding(this.deps.app, indexFile, {
@@ -753,17 +753,17 @@ export class SyncEngine {
 		return rendered.flatMap((r) => r ? [{ block: r.block, png: r.svg }] : []);
 	}
 
-	private async syncTarget(
+	private async publishTarget(
 		file: TFile,
 		binding: NoteBinding,
-		target: SyncTarget,
+		target: PublishTarget,
 		index: number,
 		contentHash: string,
 		refs: ExtractedReferences,
 		mermaidRendered: RenderedDiagram[],
 		drawioRendered: RenderedDiagram[],
 		storageXhtml: string,
-	): Promise<TargetSyncSuccess> {
+	): Promise<TargetPublishSuccess> {
 		let pageId = target.pageId || (target.url ? parsePageIdFromUrl(target.url) ?? '' : '');
 		if (pageId === '0') pageId = '';
 		let url = target.url;
@@ -789,7 +789,7 @@ export class SyncEngine {
 					spaceKey: parent.spaceKey,
 					parentId,
 					title,
-					storageXhtml: '<p>(syncing…)</p>',
+					storageXhtml: '<p>(publishing…)</p>',
 				});
 				pageId = created.id;
 				url = created.webUrl;
@@ -851,7 +851,7 @@ export class SyncEngine {
 								spaceKey: parent.spaceKey,
 								parentId,
 								title: expectedTitle,
-								storageXhtml: '<p>(syncing…)</p>',
+								storageXhtml: '<p>(publishing…)</p>',
 							});
 							pageId = created.id;
 							url = created.webUrl;
@@ -887,7 +887,7 @@ export class SyncEngine {
 			// attachment IDs that aren't valid on this instance.
 			const previousAttachments = binding.attachments?.[instanceId]?.[pageId] ?? {};
 			const attachmentResult = this.deps.settings.uploadAttachments
-				? await this.uploader.syncAttachments(pageId, refs.attachments, previousAttachments)
+				? await this.uploader.publishAttachments(pageId, refs.attachments, previousAttachments)
 				: { map: {} as Record<string, AttachmentRecord>, uploaded: 0, skipped: 0, failed: 0 };
 
 			const mermaidRecords: Record<string, AttachmentRecord> = {};
@@ -934,7 +934,7 @@ export class SyncEngine {
 			};
 		} catch (e) {
 			const msg = e instanceof Error ? e.message : String(e);
-			throw new TargetSyncFailure(msg, index, target, pageId, url);
+			throw new TargetPublishFailure(msg, index, target, pageId, url);
 		}
 	}
 
@@ -978,8 +978,8 @@ export class SyncEngine {
 		);
 	}
 
-	private toTargetFailureResult(reason: unknown, target: SyncTarget, index: number): TargetSyncFailureResult {
-		if (reason instanceof TargetSyncFailure) {
+	private toTargetFailureResult(reason: unknown, target: PublishTarget, index: number): TargetPublishFailureResult {
+		if (reason instanceof TargetPublishFailure) {
 			return {
 				index: reason.index,
 				parentUrl: reason.target.parentUrl,

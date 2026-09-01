@@ -1,11 +1,11 @@
 import type { App, TFile } from 'obsidian';
-import { NoteBinding, AttachmentRecord, SyncTarget, NoteBindingFormats, FrontmatterFieldFormat } from '../types';
+import { NoteBinding, AttachmentRecord, PublishTarget, NoteBindingFormats, FrontmatterFieldFormat } from '../types';
 
 const FIELD = {
 	URL: 'confluence_url',
 	PARENT_URL: 'confluence_parent_url',
 	PAGE_ID: 'confluence_page_id',
-	LAST_SYNCED: 'confluence_last_synced',
+	LAST_PUBLISHED: 'confluence_last_published',
 	LAST_HASH: 'confluence_last_hash',
 	ATTACHMENTS: 'confluence_attachments',
 } as const;
@@ -25,10 +25,10 @@ export interface TargetBindingPatch {
 export interface BindingPatch {
 	targetUpdates?: TargetBindingPatch[];
 	_formats?: NoteBindingFormats;
-	lastSynced?: string;
+	lastPublished?: string;
 	/**
 	 * Per-instance hash delta. The engine passes only its OWN slice updates
-	 * (the pageIds it actually pushed in this sync). writeBinding merges
+	 * (the pageIds it actually pushed in this publish). writeBinding merges
 	 * the delta against the current frontmatter inside a plugin-wide mutex
 	 * so foreign slices are preserved verbatim, even under concurrent
 	 * writers. Passing a full map here would re-introduce the
@@ -51,13 +51,13 @@ export function readBindingFromCache(app: App, file: TFile, urlKey: string = FIE
 
 	const rawAttachments = fm[FIELD.ATTACHMENTS];
 	const attachments = normalizeAttachments(rawAttachments);
-	const rawLastSynced = fm[FIELD.LAST_SYNCED];
+	const rawLastPublished = fm[FIELD.LAST_PUBLISHED];
 	const rawLastHash = fm[FIELD.LAST_HASH];
 
 	return {
 		targets,
 		_formats: formats,
-		lastSynced: typeof rawLastSynced === 'string' ? rawLastSynced : undefined,
+		lastPublished: typeof rawLastPublished === 'string' ? rawLastPublished : undefined,
 		lastHash: readLastHashFromFrontmatter(rawLastHash),
 		attachments,
 	};
@@ -81,7 +81,7 @@ async function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
 	}
 }
 
-/** After a successful sync, write the frontmatter back. app.fileManager.processFrontMatter handles this atomically. */
+/** After a successful publish, write the frontmatter back. app.fileManager.processFrontMatter handles this atomically. */
 export async function writeBinding(app: App, file: TFile, patch: BindingPatch, urlKey: string = FIELD.URL): Promise<void> {
 	await withWriteLock(async () => {
 		await app.fileManager.processFrontMatter(file, (raw: unknown) => {
@@ -101,7 +101,7 @@ export async function writeBinding(app: App, file: TFile, patch: BindingPatch, u
 				});
 				writeTargetsToFrontmatter(fm, targets, urlKey, patch._formats ?? parsed.formats);
 			}
-			if (patch.lastSynced !== undefined) fm[FIELD.LAST_SYNCED] = patch.lastSynced;
+			if (patch.lastPublished !== undefined) fm[FIELD.LAST_PUBLISHED] = patch.lastPublished;
 			if (patch.lastHashDelta !== undefined) {
 				fm[FIELD.LAST_HASH] = mergeLastHash(fm[FIELD.LAST_HASH], patch.lastHashDelta);
 			}
@@ -126,7 +126,7 @@ export async function insertTemplateFrontmatter(
 		fm[urlKey] = placeholderUrl;
 		fm[FIELD.PARENT_URL] = '';
 		fm[FIELD.PAGE_ID] = '';
-		fm[FIELD.LAST_SYNCED] = '';
+		fm[FIELD.LAST_PUBLISHED] = '';
 		fm[FIELD.LAST_HASH] = '';
 		inserted = true;
 	});
@@ -141,12 +141,12 @@ export function readTargetsFromFrontmatter(
 	fm: Frontmatter,
 	urlKey: string,
 	minLength = 1,
-): { targets: SyncTarget[]; formats: NoteBindingFormats } {
+): { targets: PublishTarget[]; formats: NoteBindingFormats } {
 	const urls = normalizeToArray(fm[urlKey], 'url');
 	const parents = normalizeToArray(fm[FIELD.PARENT_URL], 'url');
 	const pageIds = normalizeToArray(fm[FIELD.PAGE_ID], 'pageId');
 	const length = Math.max(minLength, urls.values.length, parents.values.length, pageIds.values.length);
-	const targets: SyncTarget[] = [];
+	const targets: PublishTarget[] = [];
 	for (let i = 0; i < length; i++) {
 		const parentUrl = parents.values[i] ?? '';
 		targets.push({
@@ -167,7 +167,7 @@ export function readTargetsFromFrontmatter(
 
 function writeTargetsToFrontmatter(
 	fm: Frontmatter,
-	targets: SyncTarget[],
+	targets: PublishTarget[],
 	urlKey: string,
 	formats: NoteBindingFormats,
 ): void {
@@ -218,7 +218,7 @@ function normalizeScalarValue(value: unknown): string {
 	return typeof value === 'string' ? value.trim() : String(value).trim();
 }
 
-function targetsHaveBinding(targets: SyncTarget[]): boolean {
+function targetsHaveBinding(targets: PublishTarget[]): boolean {
 	return targets.some((target) =>
 		target.url.trim().length > 0
 		|| (target.parentUrl?.trim().length ?? 0) > 0
@@ -233,7 +233,7 @@ function targetsHaveBinding(targets: SyncTarget[]): boolean {
  * `main.ts` — by the time this function runs in production, all bound
  * notes are in the per-instance form. Other shapes (pageId-nested,
  * malformed) return undefined and the caller treats the note as having no
- * attachment cache; the engine will re-upload on next sync.
+ * attachment cache; the engine will re-upload on next publish.
  */
 function normalizeAttachments(
 	v: unknown,

@@ -8,9 +8,9 @@ export interface LogEntry {
 	details?: string;
 }
 
-export enum SyncStatus {
+export enum PublishStatus {
 	Idle = 'idle',
-	Syncing = 'syncing',
+	Publishing = 'publishing',
 	Success = 'success',
 	Failed = 'failed',
 	Partial = 'partial',
@@ -20,20 +20,20 @@ export enum SyncStatus {
  * Label shown in the status-bar pill. Evaluated lazily via getters so the
  * active locale (resolved once at i18n load time) is applied at read time.
  */
-export const SyncStatusText: Record<SyncStatus, string> = {
-	get [SyncStatus.Idle]() { return t('status.idle'); },
-	get [SyncStatus.Syncing]() { return t('status.syncing'); },
-	get [SyncStatus.Success]() { return t('status.success'); },
-	get [SyncStatus.Failed]() { return t('status.failed'); },
-	get [SyncStatus.Partial]() { return t('status.partial'); },
-} as Record<SyncStatus, string>;
+export const PublishStatusText: Record<PublishStatus, string> = {
+	get [PublishStatus.Idle]() { return t('status.idle'); },
+	get [PublishStatus.Publishing]() { return t('status.publishing'); },
+	get [PublishStatus.Success]() { return t('status.success'); },
+	get [PublishStatus.Failed]() { return t('status.failed'); },
+	get [PublishStatus.Partial]() { return t('status.partial'); },
+} as Record<PublishStatus, string>;
 
 export interface AttachmentRecord {
 	hash: string;
 	id: string;
 }
 
-export interface SyncTarget {
+export interface PublishTarget {
 	/** confluence_url. Empty string means the page has not been created yet; use parentUrl with the createPage flow. */
 	url: string;
 	/** confluence_parent_url. Only used when url is empty; specifies which parent page the new page should be attached to. */
@@ -53,10 +53,10 @@ export interface NoteBindingFormats {
 /** Confluence binding information for a single note (read from frontmatter). */
 export interface NoteBinding {
 	/** index-aligned Confluence target slots; at least one entry */
-	targets: SyncTarget[];
+	targets: PublishTarget[];
 	/** in-memory only; used to preserve scalar/csv/array frontmatter style on write */
 	_formats?: NoteBindingFormats;
-	lastSynced?: string;
+	lastPublished?: string;
 	/**
 	 * Cached content hash used for the per-target skip check. Shape:
 	 * `instanceId → pageId → hash`. The instanceId layer is required because
@@ -90,8 +90,8 @@ export interface AttachmentRef {
 	filename: string;
 }
 
-/** Result of syncing a single file. */
-export interface FileSyncResult {
+/** Result of publishing a single file. */
+export interface FilePublishResult {
 	path: string;
 	skipped: boolean;
 	success: boolean;
@@ -115,13 +115,13 @@ export interface FileSyncResult {
 		}>;
 }
 
-/** Summary for a single syncAll run. */
-export interface BatchSyncResult {
+/** Summary for a single publishAll run. */
+export interface BatchPublishResult {
 	total: number;
 	updated: number;
 	skipped: number;
 	failed: number;
-	files: FileSyncResult[];
+	files: FilePublishResult[];
 }
 
 // ========== Multi-Confluence Support Types ==========
@@ -150,32 +150,32 @@ export interface ConfluenceInstance {
 	apiToken: string;
 	/**
 	 * Legacy-confluence-server compatibility: replace emoji and other
-	 * supplementary characters with [U+XXXX] placeholders so pages sync
+	 * supplementary characters with [U+XXXX] placeholders so pages publish
 	 * successfully when the server's MySQL still uses 3-byte utf8 (issue #5).
-	 * Default off; emoji sync natively on Cloud and utf8mb4 servers. Per-instance
+	 * Default off; emoji publish natively on Cloud and utf8mb4 servers. Per-instance
 	 * because users may maintain a mix of legacy Server and modern Cloud.
 	 */
 	stripSupplementaryChars: boolean;
 }
 
-/** Sync result for a single instance. */
-export interface PerInstanceSyncResult {
+/** Publish result for a single instance. */
+export interface PerInstancePublishResult {
 	instanceName: string;
 	instanceId: string;
 	total: number;
 	updated: number;
 	skipped: number;
 	failed: number;
-	files: FileSyncResult[];
+	files: FilePublishResult[];
 }
 
 /** Aggregate result across all configured instances. */
 export interface MultiInstanceBatchResult {
-	instances: PerInstanceSyncResult[];
+	instances: PerInstancePublishResult[];
 	total: number;
 	updated: number;
 	skipped: number;
 	failed: number;
 	/** Files that matched no configured instance. */
-	unmatched: FileSyncResult[];
+	unmatched: FilePublishResult[];
 }

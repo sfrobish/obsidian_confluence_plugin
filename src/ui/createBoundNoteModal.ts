@@ -29,7 +29,7 @@ export class CreateBoundNoteModal extends Modal {
 	onOpen(): void {
 		this.titleEl.setText(t('modal.createBoundNote.title'));
 
-		const wrap = this.contentEl.createDiv({ cls: 'sync-confluence-create-form' });
+		const wrap = this.contentEl.createDiv({ cls: 'publish-confluence-create-form' });
 
 		new Setting(wrap)
 			.setName(t('modal.createBoundNote.notePathName'))

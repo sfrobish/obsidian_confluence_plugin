@@ -1,12 +1,12 @@
 import { setIcon } from 'obsidian';
-import type SyncConfluencePlugin from '../main';
+import type PublishConfluencePlugin from '../main';
 import { t } from '../i18n';
 
-const ACTIONS_CLS = 'sync-confluence-prop-actions';
+const ACTIONS_CLS = 'publish-confluence-prop-actions';
 
 /**
  * Inject action icons inline in the confluence_url row in the properties panel (issue #2):
- *  - cloud-upload: sync the current note
+ *  - cloud-upload: publish the current note
  *  - external-link: open the bound Confluence page (or show a menu for multiple targets)
  *
  * This follows the Share Note plugin pattern: the properties panel renders asynchronously,
@@ -17,7 +17,7 @@ export class PropertyActionsManager {
 	private observer: MutationObserver | null = null;
 	private injectPending = false;
 
-	constructor(private plugin: SyncConfluencePlugin) {}
+	constructor(private plugin: PublishConfluencePlugin) {}
 
 	start(): void {
 		const { plugin } = this;
@@ -82,8 +82,8 @@ export class PropertyActionsManager {
 		const wrap = activeDocument.createElement('span');
 		wrap.className = ACTIONS_CLS;
 
-		this.addButton(wrap, 'cloud-upload', t('propertyActions.sync'), () => {
-			void this.plugin.syncFile(file);
+		this.addButton(wrap, 'cloud-upload', t('propertyActions.publish'), () => {
+			void this.plugin.publishFile(file);
 		});
 
 		valueEl.appendChild(wrap);
@@ -97,7 +97,7 @@ export class PropertyActionsManager {
 		onClick: (evt: MouseEvent) => void,
 	): void {
 		const btn = activeDocument.createElement('span');
-		btn.className = 'sync-confluence-prop-btn clickable-icon';
+		btn.className = 'publish-confluence-prop-btn clickable-icon';
 		btn.setAttribute('aria-label', label);
 		setIcon(btn, icon);
 		this.plugin.registerDomEvent(btn, 'click', (evt) => {

@@ -1,5 +1,5 @@
 import { App, TFile } from 'obsidian';
-import { ConfluenceInstance, SyncTarget } from '../types';
+import { ConfluenceInstance, PublishTarget } from '../types';
 import { tryParseUrl, urlMatchesBaseUrl } from '../confluence/urlMatch';
 import { readTargetsFromFrontmatter, type Frontmatter } from '../frontmatter/handler';
 
@@ -57,7 +57,7 @@ export class InstanceResolver {
 	 * created. This prevents a stale/cross-instance parentUrl from making two
 	 * engines claim the same existing page.
 	 */
-	resolveTarget(target: SyncTarget): ConfluenceInstance | null {
+	resolveTarget(target: PublishTarget): ConfluenceInstance | null {
 		const url = target.url.trim();
 		if (url) return this.resolve(url);
 		const parentUrl = target.parentUrl?.trim() ?? '';
@@ -68,7 +68,7 @@ export class InstanceResolver {
 	}
 
 	/** Effective URL used for target ownership and unmatched diagnostics. */
-	getRoutingUrl(target: SyncTarget): string {
+	getRoutingUrl(target: PublishTarget): string {
 		const url = target.url.trim();
 		if (url) return url;
 		const parentUrl = target.parentUrl?.trim() ?? '';
@@ -82,7 +82,7 @@ export class InstanceResolver {
 	 * order); other engines treat it as foreign. Files with no matched owner
 	 * never reach an engine and are returned by groupByInstance as unmatched.
 	 */
-	partitionTargets(targets: SyncTarget[], currentInstanceId: string): TargetPartition {
+	partitionTargets(targets: PublishTarget[], currentInstanceId: string): TargetPartition {
 		const owners = targets.map((target) => this.resolveTarget(target)?.id ?? null);
 		const reporterId = owners.find((id): id is string => id !== null) ?? null;
 		const result: TargetPartition = {
@@ -110,7 +110,7 @@ export class InstanceResolver {
 	}
 
 	/** Pick the URL for a referenced note that belongs to one engine. */
-	findTargetUrlForInstance(targets: SyncTarget[], instanceId: string): string | null {
+	findTargetUrlForInstance(targets: PublishTarget[], instanceId: string): string | null {
 		for (const target of targets) {
 			const url = target.url.trim();
 			if (url && this.resolveTarget(target)?.id === instanceId) return url;
@@ -172,7 +172,7 @@ export class InstanceResolver {
 		return { groups, unmatched };
 	}
 
-	private getRoutingTargetsForFile(app: App, file: TFile, frontmatterKey: string): SyncTarget[] {
+	private getRoutingTargetsForFile(app: App, file: TFile, frontmatterKey: string): PublishTarget[] {
 		const cache = app.metadataCache.getFileCache(file);
 		const fm = (cache?.frontmatter ?? {}) as Frontmatter;
 		const direct = readTargetsFromFrontmatter(fm, frontmatterKey).targets;

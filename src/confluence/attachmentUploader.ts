@@ -41,7 +41,7 @@ export class AttachmentUploader {
 	) {}
 
 	/**
-	 * Sync a set of attachments to a given page.
+	 * Publish a set of attachments to a given page.
 	 *
 	 * Flow for each ref →
 	 *  1. Read binary → sha1
@@ -51,7 +51,7 @@ export class AttachmentUploader {
 	 *
 	 * Confluence attachments are keyed by filename, so the filename must be unique.
 	 */
-	async syncAttachments(
+	async publishAttachments(
 		pageId: string,
 		refs: AttachmentRef[],
 		previous: Record<string, AttachmentRecord> = {},
@@ -104,7 +104,7 @@ export class AttachmentUploader {
 	}
 
 	/**
-	 * Sync arbitrary binary attachments (used by mermaid renderers; data is in memory and has no TFile).
+	 * Publish arbitrary binary attachments (used by mermaid renderers; data is in memory and has no TFile).
 	 */
 	async uploadBytes(
 		pageId: string,
