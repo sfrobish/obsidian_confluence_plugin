@@ -1,4 +1,4 @@
-import { type App, type TFile, TFile as TFileCtor } from 'obsidian';
+import { type App, TFile, TFile as TFileCtor } from 'obsidian';
 import { ConfluenceApi, ConfluenceApiError } from '../confluence/api';
 import { parsePageIdFromUrl } from '../confluence/urlParser';
 import {
@@ -18,6 +18,7 @@ import { Logger } from '../utils/logger';
 import { SyncConfluenceSettings } from '../settings';
 import { AttachmentRecord, BatchSyncResult, FileSyncResult, NoteBinding, SyncTarget, ConfluenceInstance, PerInstanceUsernameMap } from '../types';
 import { InstanceResolver } from './instanceResolver';
+import { collectAncestorIndexPaths, shouldReplaceRemotePageOnConflict } from './structureConflict';
 import { t } from '../i18n';
 
 export interface SyncEngineDeps {
@@ -131,14 +132,18 @@ export class SyncEngine {
 			this.deps.logger.warn('A sync task is already running; skipping this one');
 			return null;
 		}
+		const orderedFiles = [...files].sort((a, b) => {
+			const depthDelta = a.path.split('/').length - b.path.split('/').length;
+			return depthDelta === 0 ? a.path.localeCompare(b.path) : depthDelta;
+		});
 		this.busy = true;
 		try {
 			// Pass 1: pre-create placeholder pages for every target in the batch that does not yet have a pageId,
 			// so that when Pass 2 converts markdown, `[[wikilink]]` can resolve the peer's confluence_url.
-			await this.ensurePageIdsForBatch(files);
+			await this.ensurePageIdsForBatch(orderedFiles);
 
-			const result: BatchSyncResult = { total: files.length, updated: 0, skipped: 0, failed: 0, files: [] };
-			for (const file of files) {
+			const result: BatchSyncResult = { total: orderedFiles.length, updated: 0, skipped: 0, failed: 0, files: [] };
+			for (const file of orderedFiles) {
 				const r = await this.syncFileInternal(file);
 				result.files.push(r);
 				if (r.skipped) result.skipped += 1;
@@ -174,8 +179,26 @@ export class SyncEngine {
 	private async syncFileInternal(file: TFile): Promise<FileSyncResult> {
 		const path = file.path;
 		try {
-			const binding = readBindingFromCache(this.deps.app, file, this.deps.settings.frontmatterKey);
-			if (!binding) return { path, skipped: true, success: false, error: 'Missing confluence_url / confluence_parent_url frontmatter' };
+			let binding = readBindingFromCache(this.deps.app, file, this.deps.settings.frontmatterKey);
+			if (!binding) {
+				const inheritedParentId = await this.resolveFolderParentPageId(file);
+				if (!inheritedParentId) {
+					this.deps.logger.info(`No direct frontmatter binding and no ancestor _index parent found for ${path}`);
+					return { path, skipped: true, success: false, error: 'Missing confluence_url / confluence_parent_url frontmatter and no ancestor _index.md parent was found' };
+				}
+				const inheritedTarget = await this.resolveInheritedTargetInfo(file);
+				this.deps.logger.info(`Leaf note ${path} has no direct binding; inherited parent page ${inheritedParentId} from nearest ancestor _index.md`);
+				binding = {
+					targets: [{
+						url: '',
+						parentUrl: inheritedTarget?.parentUrl ?? inheritedTarget?.url ?? '',
+						pageId: '',
+					}],
+					_formats: { url: 'scalar', parentUrl: 'scalar', pageId: 'scalar' },
+				};
+			} else {
+				this.deps.logger.info(`Leaf note ${path} has direct binding; syncing with explicit Confluence target metadata`);
+			}
 
 			const markdown = await this.deps.app.vault.cachedRead(file);
 			const resolveWikilink = this.makeWikilinkResolver();
@@ -495,8 +518,18 @@ export class SyncEngine {
 		const { app, api, settings, logger } = this.deps;
 		const instanceBaseUrl = this.deps.instance.baseUrl;
 		for (const file of files) {
-			const binding = readBindingFromCache(app, file, settings.frontmatterKey);
-			if (!binding) continue;
+			let binding = readBindingFromCache(app, file, settings.frontmatterKey);
+			if (!binding) {
+				const inheritedParentId = await this.resolveFolderParentPageId(file);
+				if (!inheritedParentId) continue;
+				logger.info(`Batch pre-create: ${file.path} has no direct binding; using inherited parent ${inheritedParentId} from ancestor _index.md`);
+				binding = {
+					targets: [{ url: '', parentUrl: undefined, pageId: '' }],
+					_formats: { url: 'scalar', parentUrl: 'scalar', pageId: 'scalar' },
+				};
+			} else {
+				logger.info(`Batch pre-create: ${file.path} has direct binding; using explicit target metadata`);
+			}
 
 			const targetUpdates: TargetBindingPatch[] = [];
 			let changed = false;
@@ -511,36 +544,60 @@ export class SyncEngine {
 				let pageId = target.pageId || (target.url ? parsePageIdFromUrl(target.url) ?? '' : '');
 				if (pageId === '0') pageId = '';
 				if (pageId) {
-					targetUpdates.push({});
-					continue;
+					try {
+						await api.getPage(pageId);
+						targetUpdates.push({});
+						continue;
+					} catch (e) {
+						if (!(e instanceof ConfluenceApiError) || e.code !== 'not_found') {
+							targetUpdates.push({});
+							continue;
+						}
+						logger.warn(`Confluence page ${pageId} for ${file.path} was not found; clearing stale binding so it can be recreated from the vault.`);
+						target.pageId = '';
+						target.url = '';
+						pageId = '';
+					}
 				}
-				if (!target.parentUrl) {
-					targetUpdates.push({});
-					continue;
+				const ensuredFolderParentId = await this.ensureImmediateFolderIndexPage(file);
+				if (ensuredFolderParentId) {
+					this.deps.logger.info(`Ensured immediate folder index page for ${file.path}: ${ensuredFolderParentId}`);
 				}
-				const parentId = parsePageIdFromUrl(target.parentUrl);
-				if (!parentId) {
+				const parentInfo = await this.resolveEffectiveParentInfo(file, target);
+				const resolvedParentId = parentInfo.parentId ?? '';
+				this.deps.logger.info(`Resolved Confluence parent for ${file.path}: source=${parentInfo.source}, parentId=${resolvedParentId || '(none)'}`);
+				if (!resolvedParentId) {
 					targetUpdates.push({});
 					continue;
 				}
 				try {
-					const parent = await api.getPage(parentId);
+					const parent = await api.getPage(resolvedParentId);
 					if (!parent.spaceKey) {
 						targetUpdates.push({});
 						continue;
 					}
-					logger.info(`Pre-creating child page: ${file.basename} (parent=${parentId}, space=${parent.spaceKey})`);
+					const pageTitle = this.getConfluencePageTitle(file);
+					logger.info(`Pre-creating child page: ${pageTitle} (parent=${resolvedParentId}, source=${parentInfo.source}, space=${parent.spaceKey})`);
 					const created = await api.createPage({
 						spaceKey: parent.spaceKey,
-						parentId,
-						title: file.basename,
+						parentId: resolvedParentId,
+						title: pageTitle,
 						storageXhtml: '<p>(syncing…)</p>',
 					});
 					targetUpdates.push({
-						parentUrl: target.parentUrl,
+						parentUrl: target.parentUrl || undefined,
 						pageId: created.id,
 						url: created.webUrl,
 					});
+					if (file.basename === '_index') {
+						const fileParent = file.path.includes('/')
+							? file.path.split('/').slice(0, -1).join('/')
+							: '';
+						const parentPath = fileParent && fileParent.includes('/')
+							? fileParent.slice(0, fileParent.lastIndexOf('/'))
+							: '';
+						this.deps.logger.info(`Index page ${file.path} created at Confluence page ${created.id}; parent folder path=${fileParent || '(root)'}, ancestor parent path=${parentPath || '(root)'}`);
+					}
 					changed = true;
 				} catch (e) {
 					// Failure to pre-create a single target does not block the batch; the real Pass will try again and attach the error to that target.
@@ -552,6 +609,147 @@ export class SyncEngine {
 				await writeBinding(app, file, { targetUpdates, _formats: binding._formats }, settings.frontmatterKey);
 			}
 		}
+	}
+
+	private resolveFrontmatterPageId(fm: Record<string, unknown> | undefined): string | null {
+		const candidates = [
+			typeof fm?.confluence_page_id === 'string' ? fm.confluence_page_id.trim() : '',
+			typeof fm?.confluence_url === 'string' ? parsePageIdFromUrl(fm.confluence_url) ?? '' : '',
+			typeof fm?.confluence_parent_url === 'string' ? parsePageIdFromUrl(fm.confluence_parent_url) ?? '' : '',
+		];
+		const pageId = candidates.find((candidate) => candidate && candidate !== '0');
+		return pageId ?? null;
+	}
+
+	private async resolveEffectiveParentInfo(file: TFile, target: SyncTarget): Promise<{ parentId: string | null; source: 'folder' | 'target' | 'none' }> {
+		const parentFromFolder = await this.resolveFolderParentPageId(file);
+		if (parentFromFolder) {
+			return { parentId: parentFromFolder, source: 'folder' };
+		}
+		const parentFromTarget = target.parentUrl ? parsePageIdFromUrl(target.parentUrl) ?? null : null;
+		if (parentFromTarget) {
+			return { parentId: parentFromTarget, source: 'target' };
+		}
+		return { parentId: null, source: 'none' };
+	}
+
+	private getConfluencePageTitle(file: TFile): string {
+		if (file.basename !== '_index') return file.basename;
+		const folderPath = file.path.includes('/')
+			? file.path.split('/').slice(0, -1).join('/')
+			: '';
+		const folderName = folderPath.includes('/')
+			? folderPath.split('/').at(-1)
+			: folderPath;
+		return folderName && folderName.trim().length > 0 ? folderName : file.basename;
+	}
+
+	private async resolveInheritedTargetInfo(file: TFile): Promise<{ url: string; parentUrl?: string } | null> {
+		let current = file.path.includes('/')
+			? file.path.split('/').slice(0, -1).join('/')
+			: '';
+		if (file.basename === '_index') {
+			current = current.includes('/')
+				? current.slice(0, current.lastIndexOf('/'))
+				: '';
+		}
+		while (current.length > 0) {
+			const indexPath = `${current}/_index.md`;
+			const indexFile = this.deps.app.vault.getAbstractFileByPath(indexPath);
+			if (indexFile && indexFile instanceof TFile) {
+				const fm = this.deps.app.metadataCache.getFileCache(indexFile)?.frontmatter as Record<string, unknown> | undefined;
+				if (!fm) {
+					current = current.includes('/') ? current.slice(0, current.lastIndexOf('/')) : '';
+					continue;
+				}
+				const url = typeof fm.confluence_url === 'string' ? fm.confluence_url.trim() : '';
+				const parentUrl = typeof fm.confluence_parent_url === 'string' ? fm.confluence_parent_url.trim() : '';
+				const effectiveParent = parentUrl || url;
+				if (effectiveParent) return { url: '', parentUrl: effectiveParent };
+			}
+			current = current.includes('/')
+				? current.slice(0, current.lastIndexOf('/'))
+				: '';
+		}
+		return null;
+	}
+
+	private async ensureImmediateFolderIndexPage(file: TFile): Promise<string | null> {
+		const folderPath = file.path.includes('/')
+			? file.path.split('/').slice(0, -1).join('/')
+			: '';
+		if (!folderPath) return null;
+
+		const indexPath = `${folderPath}/_index.md`;
+		const indexFile = this.deps.app.vault.getAbstractFileByPath(indexPath);
+		if (!(indexFile instanceof TFile)) return null;
+
+		const fm = this.deps.app.metadataCache.getFileCache(indexFile)?.frontmatter as Record<string, unknown> | undefined;
+		const pageId = this.resolveFrontmatterPageId(fm);
+		if (pageId) return pageId;
+
+		const parentId = await this.resolveFolderParentPageId(indexFile);
+		if (!parentId) return null;
+
+		const parent = await this.deps.api.getPage(parentId);
+		if (!parent.spaceKey) return null;
+
+		const created = await this.deps.api.createPage({
+			spaceKey: parent.spaceKey,
+			parentId,
+			title: this.getConfluencePageTitle(indexFile),
+			storageXhtml: '<p>(syncing…)</p>',
+		});
+
+		await writeBinding(this.deps.app, indexFile, {
+			targetUpdates: [{
+				parentUrl: '',
+				pageId: created.id,
+				url: created.webUrl,
+			}],
+			_formats: { url: 'scalar', parentUrl: 'scalar', pageId: 'scalar' },
+		}, this.deps.settings.frontmatterKey);
+
+		return created.id;
+	}
+
+	private async resolveFolderParentPageId(file: TFile): Promise<string | null> {
+		const filePath = file.path.replace(/\\/g, '/');
+		for (const indexPath of collectAncestorIndexPaths(filePath)) {
+			const indexFile = this.deps.app.vault.getAbstractFileByPath(indexPath);
+			if (!(indexFile instanceof TFile)) continue;
+			const fm = this.deps.app.metadataCache.getFileCache(indexFile)?.frontmatter as Record<string, unknown> | undefined;
+			const pageId = this.resolveFrontmatterPageId(fm);
+			if (pageId) return pageId;
+		}
+		return null;
+	}
+
+	private findExplicitSacredRootFile(): TFile | null {
+		let sacredRoot: TFile | null = null;
+		for (const candidate of this.deps.app.vault.getMarkdownFiles()) {
+			const fm = this.deps.app.metadataCache.getFileCache(candidate)?.frontmatter as Record<string, unknown> | undefined;
+			if (fm && fm.confluence_root === true) {
+				if (sacredRoot) {
+					this.deps.logger.warn(
+						`Multiple sacred root files found: ${sacredRoot.path} and ${candidate.path}. Using ${sacredRoot.path} and ignoring the rest.`,
+					);
+					continue;
+				}
+				sacredRoot = candidate;
+			}
+		}
+		return sacredRoot;
+	}
+
+	private async isSacredRootPage(file: TFile, pageId: string): Promise<boolean> {
+		if (!pageId) return false;
+		const rootFile = this.findExplicitSacredRootFile();
+		if (!rootFile || rootFile.path !== file.path) return false;
+		const rootFm = this.deps.app.metadataCache.getFileCache(rootFile)?.frontmatter as Record<string, unknown> | undefined;
+		if (!rootFm || rootFm.confluence_root !== true) return false;
+		const rootPageId = this.resolveFrontmatterPageId(rootFm);
+		return rootPageId === pageId;
 	}
 
 	private async renderMermaidOnce(refs: ExtractedReferences): Promise<RenderedDiagram[]> {
@@ -590,18 +788,20 @@ export class SyncEngine {
 		let createdNewPage = false;
 		try {
 			if (!pageId) {
-				if (!target.parentUrl) {
-					throw new Error(`Could not parse pageId from URL: ${target.url}`);
-				}
-				const parentId = parsePageIdFromUrl(target.parentUrl);
+				await this.ensureImmediateFolderIndexPage(file);
+				const parentInfo = await this.resolveEffectiveParentInfo(file, target);
+				const parentId = parentInfo.parentId;
 				if (!parentId) {
-					throw new Error(`Could not parse pageId from parent URL: ${target.parentUrl}`);
+					throw new Error(
+						`No parent page found for ${file.path}. Add confluence_parent_url or create a parent _index.md in the folder hierarchy.`,
+					);
 				}
+				this.deps.logger.info(`Resolved parent for ${file.path}: ${parentInfo.source} (${parentId})`);
 				const parent = await this.deps.api.getPage(parentId);
 				if (!parent.spaceKey) {
-					throw new Error(`Parent page is missing spaceKey: ${target.parentUrl}`);
+					throw new Error(`Parent page is missing spaceKey: ${parentId}`);
 				}
-				const title = file.basename;
+				const title = this.getConfluencePageTitle(file);
 				this.deps.logger.info(`Creating child page: ${title} (parent=${parentId}, space=${parent.spaceKey})`);
 				const created = await this.deps.api.createPage({
 					spaceKey: parent.spaceKey,
@@ -613,6 +813,71 @@ export class SyncEngine {
 				url = created.webUrl;
 				createdNewPage = true;
 				this.deps.logger.info(`Created child page ${created.id}: ${created.webUrl}`);
+			}
+
+			if (pageId) {
+				let currentPage: Awaited<ReturnType<typeof this.deps.api.getPage>> | null = null;
+				try {
+					currentPage = await this.deps.api.getPage(pageId);
+				} catch (e) {
+					if (!(e instanceof ConfluenceApiError) || e.code !== 'not_found') {
+						throw e;
+					}
+					this.deps.logger.warn(`Confluence page ${pageId} for ${file.path} is missing; clearing stale page binding and recreating it from the vault.`);
+					pageId = '';
+					url = '';
+					target.pageId = '';
+					target.url = '';
+				}
+				if (currentPage) {
+					const expectedParentId = (await this.resolveEffectiveParentInfo(file, target)).parentId;
+					const expectedTitle = this.getConfluencePageTitle(file);
+					const rootFile = this.findExplicitSacredRootFile();
+					if (!rootFile) {
+						this.deps.logger.warn(
+							`No Confluence sacred root configured: no markdown file has confluence_root: true. Skipping destructive replace for ${file.path}.`,
+						);
+					} else {
+						const sacredRootPage = await this.isSacredRootPage(file, pageId);
+						if (sacredRootPage) {
+							this.deps.logger.warn(`Protecting sacred root Confluence page ${pageId} for ${file.path}; it will not be deleted or replaced.`);
+						}
+						if (shouldReplaceRemotePageOnConflict({
+							currentParentId: currentPage.parentId,
+							expectedParentId,
+							currentTitle: currentPage.title,
+							expectedTitle,
+							sacredRootPage,
+							defaultBehavior: true,
+						})) {
+							this.deps.logger.warn(
+								`Remote page ${pageId} conflicts with vault structure; deleting and recreating from vault: current parent=${currentPage.parentId ?? '(none)'}, expected parent=${expectedParentId ?? '(none)'}, current title=${currentPage.title}, expected title=${expectedTitle}`,
+							);
+							await this.deps.api.deletePageTree(pageId);
+							const parentInfo = await this.resolveEffectiveParentInfo(file, target);
+							const parentId = parentInfo.parentId;
+							if (!parentId) {
+								throw new Error(
+									`No parent page found for ${file.path}. Add confluence_parent_url or create a parent _index.md in the folder hierarchy.`,
+								);
+							}
+							const parent = await this.deps.api.getPage(parentId);
+							if (!parent.spaceKey) {
+								throw new Error(`Parent page is missing spaceKey: ${parentId}`);
+							}
+							const created = await this.deps.api.createPage({
+								spaceKey: parent.spaceKey,
+								parentId,
+								title: expectedTitle,
+								storageXhtml: '<p>(syncing…)</p>',
+							});
+							pageId = created.id;
+							url = created.webUrl;
+							createdNewPage = true;
+							this.deps.logger.info(`Recreated child page ${created.id}: ${created.webUrl}`);
+						}
+					}
+				}
 			}
 
 			if (!createdNewPage
@@ -662,7 +927,7 @@ export class SyncEngine {
 			}
 
 			const page = await this.deps.api.getPage(pageId);
-			await this.updatePageWithRetry(pageId, file.basename, storageXhtml, page.version, file.path);
+			await this.updatePageWithRetry(pageId, this.getConfluencePageTitle(file), storageXhtml, page.version, file.path);
 
 			const mergedAttachments: Record<string, AttachmentRecord> = {
 				...previousAttachments,
@@ -699,6 +964,26 @@ export class SyncEngine {
 		}
 	}
 
+	private async retryWithFreshPageVersion<T>(
+		pageId: string,
+		action: (pageVersion: number) => Promise<T>,
+		label: string,
+	): Promise<T> {
+		let page = await this.deps.api.getPage(pageId);
+		for (let attempt = 0; attempt < 3; attempt++) {
+			try {
+				return await action(page.version);
+			} catch (e) {
+				if (!(e instanceof ConfluenceApiError) || e.code !== 'version_conflict') {
+					throw e;
+				}
+				this.deps.logger.warn(`${label} hit a version conflict; refreshing the page version and retrying: ${pageId}`);
+				page = await this.deps.api.getPage(pageId);
+			}
+		}
+		return await action(page.version);
+	}
+
 	private async updatePageWithRetry(
 		pageId: string,
 		title: string,
@@ -706,25 +991,17 @@ export class SyncEngine {
 		currentVersion: number,
 		path: string,
 	): Promise<void> {
-		try {
-			await this.deps.api.updatePage(pageId, {
-				title,
-				storageXhtml,
-				newVersion: currentVersion + 1,
-			});
-		} catch (e) {
-			if (e instanceof ConfluenceApiError && e.code === 'version_conflict') {
-				this.deps.logger.warn(`Version conflict; re-fetching and retrying: ${path}`);
-				const refreshed = await this.deps.api.getPage(pageId);
+		await this.retryWithFreshPageVersion(
+			pageId,
+			async (pageVersion) => {
 				await this.deps.api.updatePage(pageId, {
 					title,
 					storageXhtml,
-					newVersion: refreshed.version + 1,
+					newVersion: pageVersion + 1,
 				});
-				return;
-			}
-			throw e;
-		}
+			},
+			`Updating page ${path}`,
+		);
 	}
 
 	private toTargetFailureResult(reason: unknown, target: SyncTarget, index: number): TargetSyncFailureResult {

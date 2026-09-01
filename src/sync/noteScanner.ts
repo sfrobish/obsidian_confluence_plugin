@@ -1,4 +1,4 @@
-import type { App, TFile } from 'obsidian';
+import { type App, TFile } from 'obsidian';
 import { frontmatterHasBinding, type Frontmatter } from '../frontmatter/handler';
 
 export interface ScanOptions {
@@ -26,13 +26,47 @@ export function scanBoundNotes(app: App, opts: ScanOptions): TFile[] {
 	for (const file of all) {
 		if (scanFolders.length > 0 && !scanFolders.some((f) => file.path === f || file.path.startsWith(f + '/'))) continue;
 		if (ignoreRegexes.some((r) => r.test(file.path))) continue;
-			const fm = app.metadataCache.getFileCache(file)?.frontmatter as Frontmatter | undefined;
-			if (!fm) continue;
-			// Sync only when url or parent_url has at least one value (parent_url is used for creating child pages on first sync)
-			if (!frontmatterHasBinding(fm, opts.frontmatterKey)) continue;
-			out.push(file);
+		const fm = app.metadataCache.getFileCache(file)?.frontmatter as Frontmatter | undefined;
+		const isIndexPage = file.basename === '_index';
+		const hasHierarchyAnchor = isIndexPage && hasConfluenceMetadata(fm);
+		const hasInheritedHierarchyAnchor = !hasHierarchyAnchor && hasAncestorHierarchyAnchor(app, file);
+		const hasDirectBinding = frontmatterHasBinding((fm ?? {}) as Frontmatter, opts.frontmatterKey);
+		// Sync only when the note has an explicit binding or it falls under a folder hierarchy that already has Confluence metadata.
+		if (!hasDirectBinding && !hasHierarchyAnchor && !hasInheritedHierarchyAnchor) continue;
+		out.push(file);
 	}
-	return out;
+	return out.sort((a, b) => {
+		const depthDelta = a.path.split('/').length - b.path.split('/').length;
+		return depthDelta === 0 ? a.path.localeCompare(b.path) : depthDelta;
+	});
+}
+
+function hasConfluenceMetadata(fm: Frontmatter | undefined): boolean {
+	if (!fm) return false;
+	return !!(
+		(typeof fm.confluence_page_id === 'string' && fm.confluence_page_id.trim().length > 0) ||
+		(typeof fm.confluence_url === 'string' && fm.confluence_url.trim().length > 0) ||
+		(typeof fm.confluence_parent_url === 'string' && fm.confluence_parent_url.trim().length > 0)
+	);
+}
+
+function hasAncestorHierarchyAnchor(app: App, file: TFile): boolean {
+	let current = file.path.includes('/')
+		? file.path.split('/').slice(0, -1).join('/')
+		: '';
+
+	while (current.length > 0) {
+		const indexPath = `${current}/_index.md`;
+		const indexFile = app.vault.getAbstractFileByPath(indexPath);
+		if (indexFile && indexFile instanceof TFile) {
+			const fm = app.metadataCache.getFileCache(indexFile)?.frontmatter as Frontmatter | undefined;
+			if (hasConfluenceMetadata(fm)) return true;
+		}
+		current = current.includes('/')
+			? current.slice(0, current.lastIndexOf('/'))
+			: '';
+	}
+	return false;
 }
 
 function normalizeFolder(s: string): string {

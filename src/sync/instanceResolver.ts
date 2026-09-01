@@ -1,4 +1,4 @@
-import type { App, TFile } from 'obsidian';
+import { App, TFile } from 'obsidian';
 import { ConfluenceInstance, SyncTarget } from '../types';
 import { tryParseUrl, urlMatchesBaseUrl } from '../confluence/urlMatch';
 import { readTargetsFromFrontmatter, type Frontmatter } from '../frontmatter/handler';
@@ -61,14 +61,19 @@ export class InstanceResolver {
 		const url = target.url.trim();
 		if (url) return this.resolve(url);
 		const parentUrl = target.parentUrl?.trim() ?? '';
-		return parentUrl ? this.resolve(parentUrl) : null;
+		if (parentUrl) return this.resolve(parentUrl);
+		const pageId = target.pageId.trim();
+		if (pageId && this.deps.instances.length === 1) return this.deps.instances[0] ?? null;
+		return null;
 	}
 
 	/** Effective URL used for target ownership and unmatched diagnostics. */
 	getRoutingUrl(target: SyncTarget): string {
 		const url = target.url.trim();
 		if (url) return url;
-		return target.parentUrl?.trim() ?? '';
+		const parentUrl = target.parentUrl?.trim() ?? '';
+		if (parentUrl) return parentUrl;
+		return target.pageId.trim();
 	}
 
 	/**
@@ -134,10 +139,11 @@ export class InstanceResolver {
 		const unmatched: TFile[] = [];
 
 		for (const file of files) {
-			const cache = app.metadataCache.getFileCache(file);
-			const fm = (cache?.frontmatter ?? {}) as Frontmatter;
-			const targets = readTargetsFromFrontmatter(fm, frontmatterKey).targets;
-			const routableTargets = targets.filter((target) => this.getRoutingUrl(target).length > 0);
+			const targets = this.getRoutingTargetsForFile(app, file, frontmatterKey);
+			const routableTargets = targets.filter((target) => {
+				const route = this.getRoutingUrl(target);
+				return route.length > 0 || target.pageId.trim().length > 0;
+			});
 			if (routableTargets.length === 0) {
 				unmatched.push(file);
 				continue;
@@ -164,5 +170,39 @@ export class InstanceResolver {
 		}
 
 		return { groups, unmatched };
+	}
+
+	private getRoutingTargetsForFile(app: App, file: TFile, frontmatterKey: string): SyncTarget[] {
+		const cache = app.metadataCache.getFileCache(file);
+		const fm = (cache?.frontmatter ?? {}) as Frontmatter;
+		const direct = readTargetsFromFrontmatter(fm, frontmatterKey).targets;
+		if (direct.some((target) => target.url.trim().length > 0 || target.parentUrl?.trim().length || target.pageId.trim().length > 0)) {
+			return direct;
+		}
+
+		let current = file.path.includes('/')
+			? file.path.split('/').slice(0, -1).join('/')
+			: '';
+		while (current.length > 0) {
+			const indexPath = `${current}/_index.md`;
+			const indexFile = app.vault.getAbstractFileByPath(indexPath);
+			if (indexFile instanceof TFile) {
+				const indexFm = (app.metadataCache.getFileCache(indexFile)?.frontmatter ?? {}) as Frontmatter;
+				const inherited = readTargetsFromFrontmatter(indexFm, frontmatterKey).targets;
+				const routed = inherited.map((target) => ({
+					...target,
+					url: '',
+					parentUrl: target.parentUrl?.trim() || target.url.trim() || target.pageId.trim() || undefined,
+					pageId: '',
+				}));
+				if (routed.some((target) => (target.parentUrl?.trim().length ?? 0) > 0 || target.url.trim().length > 0 || target.pageId.trim().length > 0)) {
+					return routed;
+				}
+			}
+			current = current.includes('/')
+				? current.slice(0, current.lastIndexOf('/'))
+				: '';
+		}
+		return direct;
 	}
 }

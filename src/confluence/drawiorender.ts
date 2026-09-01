@@ -1,28 +1,116 @@
 import { DiagramBlock } from './markdownConverter';
 import { Logger } from '../utils/logger';
 
+function getRuntimeLocationInfo(): string {
+	const bits: string[] = [];
+	try {
+		const runtimeDir = typeof __dirname !== 'undefined' ? __dirname : '(no __dirname)';
+		bits.push(`__dirname=${runtimeDir}`);
+	} catch {
+		bits.push('__dirname=unavailable');
+	}
+	try {
+		const currentDir = typeof process !== 'undefined' && process.cwd ? process.cwd() : '(no process.cwd)';
+		bits.push(`process.cwd=${currentDir}`);
+	} catch {
+		bits.push('process.cwd=unavailable');
+	}
+	try {
+		const mainFile = typeof require !== 'undefined' && require.main ? require.main.filename : '(no require.main)';
+		bits.push(`require.main=${mainFile}`);
+	} catch {
+		bits.push('require.main=unavailable');
+	}
+	try {
+		const winLoc = typeof window !== 'undefined' ? window.location?.href : '(no window)';
+		bits.push(`window.location=${winLoc}`);
+	} catch {
+		bits.push('window.location=unavailable');
+	}
+	return bits.join(' | ');
+}
+
+function getViewerCandidatePaths(): string[] {
+	const fs = require('fs');
+	const path = require('path');
+	const candidatePaths = new Set<string>();
+	const pluginId = 'ccx-publish-confluence';
+
+	const add = (...segments: string[]) => {
+		if (segments.length === 0) return;
+		candidatePaths.add(path.resolve(...segments));
+	};
+
+	try {
+		const { app } = require('electron');
+		if (app && typeof app.getPath === 'function') {
+			add(app.getPath('userData'), 'plugins', pluginId, 'viewer-static.min.cjs');
+			add(app.getPath('userData'), 'plugins', pluginId, 'dist', 'viewer-static.min.cjs');
+			add(app.getPath('userData'), 'plugins', pluginId, 'assets', 'viewer-static.min.cjs');
+			add(app.getPath('appData'), 'obsidian', 'plugins', pluginId, 'viewer-static.min.cjs');
+			add(app.getPath('appData'), 'obsidian', 'plugins', pluginId, 'dist', 'viewer-static.min.cjs');
+		}
+	} catch {
+		// Electron is not available in all runtimes; the fallback paths below still apply.
+	}
+
+	const appDataRoot = process.env.APPDATA ?? process.env.HOME ?? '';
+	if (appDataRoot) {
+		add(appDataRoot, 'obsidian', 'plugins', pluginId, 'viewer-static.min.cjs');
+		add(appDataRoot, 'obsidian', 'plugins', pluginId, 'dist', 'viewer-static.min.cjs');
+		add(appDataRoot, 'obsidian', 'plugins', pluginId, 'assets', 'viewer-static.min.cjs');
+	}
+
+	if (typeof process !== 'undefined' && typeof process.cwd === 'function') {
+		add(process.cwd(), 'dist', 'viewer-static.min.cjs');
+		add(process.cwd(), 'assets', 'viewer-static.min.cjs');
+	}
+
+	if (typeof __dirname !== 'undefined') {
+		add(__dirname, 'viewer-static.min.cjs');
+		add(__dirname, '..', 'viewer-static.min.cjs');
+		add(__dirname, '..', '..', 'assets', 'viewer-static.min.cjs');
+	}
+
+	candidatePaths.add('./viewer-static.min.cjs');
+	candidatePaths.add('../viewer-static.min.cjs');
+	candidatePaths.add('../../assets/viewer-static.min.cjs');
+
+	const sorted = Array.from(candidatePaths).filter((candidate) => typeof candidate === 'string' && candidate.length > 0);
+	return sorted.filter((candidate) => {
+		if (candidate.startsWith('.') || candidate.startsWith('/') || /^[A-Za-z]:\\/.test(candidate)) {
+			return true;
+		}
+		return true;
+	});
+}
+
 function ensureOfflineViewerLoaded(): void {
 	if (typeof window === 'undefined') return;
 	if ((window as any).GraphViewer && (window as any).mxUtils) return;
 
-	const candidatePaths = [
-		'./viewer-static.min.cjs',
-		'../viewer-static.min.cjs',
-		'../../assets/viewer-static.min.cjs',
-	];
+	const fs = require('fs');
+	const runtimeInfo = getRuntimeLocationInfo();
+	const candidatePaths = getViewerCandidatePaths();
+	console.info('[Draw.io] Offline viewer load context:', runtimeInfo);
+	console.info('[Draw.io] Loading viewer with candidate paths:', candidatePaths.join(', '));
 
 	for (const candidate of candidatePaths) {
 		try {
-			// In the packaged plugin, the asset is copied next to main.js in dist/. In source builds,
-			// the repo asset path is also valid. The viewer script mutates window and exposes GraphViewer/mxUtils.
-			require(candidate);
+			const normalized = candidate.startsWith('.') ? candidate : candidate;
+			if (!fs.existsSync(normalized)) {
+				console.debug('[Draw.io] viewer candidate not found:', normalized);
+				continue;
+			}
+			console.info('[Draw.io] Trying viewer path:', normalized);
+			require(normalized);
 			if ((window as any).GraphViewer && (window as any).mxUtils) return;
-		} catch {
-			// keep probing the next candidate
+		} catch (error) {
+			console.debug('[Draw.io] viewer candidate failed:', candidate, error);
 		}
 	}
 
-	console.warn('Draw.io viewer script is not available in this Obsidian session; checked:', candidatePaths.join(', '));
+	console.warn('[Draw.io] viewer script is not available in this Obsidian session; runtime context:', runtimeInfo, 'checked:', candidatePaths.join(', '));
 }
 
 export type RenderedDrawio = { block: DiagramBlock; svg: ArrayBuffer };

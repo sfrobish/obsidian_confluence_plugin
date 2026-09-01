@@ -1,7 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
 import { builtinModules } from 'node:module';
-import { copyFileSync, mkdirSync, existsSync } from 'fs';
+import { copyFileSync, mkdirSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 const banner =
@@ -14,7 +14,9 @@ if you want to view the source, please visit the github repository of this plugi
 const prod = (process.argv[2] === "production");
 const outDir = "dist";
 
-/** After the build, copy manifest.json and styles.css to dist when they exist in the project root so the full package is installable. */
+/** After the build, copy manifest.json and styles.css to dist when they exist in the project root so the full package is installable.
+ * Also inline the offline Draw.io viewer bundle into main.js so the plugin ships as a single runtime file.
+ */
 const copyPlugin = {
 	name: 'copy-plugin-files',
 	setup(build) {
@@ -23,10 +25,18 @@ const copyPlugin = {
 			if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
 			const manifestSrc = join(cwd, 'manifest.json');
 			const stylesSrc = join(cwd, 'styles.css');
-			const viewerSrc = join(cwd, 'assets', 'viewer-static.min.cjs');
+			const mainJs = join(cwd, outDir, 'main.js');
 			if (existsSync(manifestSrc)) copyFileSync(manifestSrc, join(cwd, outDir, 'manifest.json'));
 			if (existsSync(stylesSrc)) copyFileSync(stylesSrc, join(cwd, outDir, 'styles.css'));
-			if (existsSync(viewerSrc)) copyFileSync(viewerSrc, join(cwd, outDir, 'viewer-static.min.cjs'));
+			if (existsSync(mainJs)) {
+				const viewerSrc = join(cwd, 'assets', 'viewer-static.min.cjs');
+				if (existsSync(viewerSrc)) {
+					const viewerCode = readFileSync(viewerSrc, 'utf8');
+					const source = readFileSync(mainJs, 'utf8');
+					const injected = `\n;(() => {\n  const viewerCode = ${JSON.stringify(viewerCode)};\n  try {\n    (0, eval)(viewerCode);\n  } catch (error) {\n    console.warn('[Draw.io] bundled viewer failed to initialize:', error);\n  }\n})();\n`;
+					writeFileSync(mainJs, source + injected, 'utf8');
+				}
+			}
 		});
 	},
 };
