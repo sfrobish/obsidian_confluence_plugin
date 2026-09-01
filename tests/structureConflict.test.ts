@@ -1,5 +1,31 @@
 import { describe, expect, it } from 'bun:test';
 import { collectAncestorIndexPaths, shouldReplaceRemotePageOnConflict } from '../src/sync/structureConflict';
+import { MarkdownConverter } from '../src/confluence/markdownConverter';
+
+(globalThis as any).window ??= { crypto: { subtle: crypto.subtle } };
+
+describe('markdown Mermaid fence conversion', () => {
+	it('replaces a fenced Mermaid block even when there is a blank line before the closing fence', async () => {
+		const converter = new MarkdownConverter({} as any);
+		const md = '```mermaid\nflowchart TD\nA-->B\n\n```\n';
+		const refs = await converter.extractReferences(md, 'x.md', { mermaidExt: 'svg' });
+		const ctx = {
+			attachedFilenames: new Set<string>(),
+			mermaidFilenameByHash: new Map(refs.mermaid.map((b) => [b.hash, b.filename])),
+			plantUmlFilenameByHash: new Map(),
+			drawioFilenameByHash: new Map(),
+			drawioFilenameByPath: new Map(),
+			renderMermaidToPng: true,
+			renderPlantUmlToPng: false,
+			renderDrawioToSvg: false,
+			defaultImageWidthPx: 0,
+			stripSupplementaryChars: false,
+		};
+		const out = await converter.convert(md, 'x.md', ctx);
+		expect(out).toContain('<ac:image>');
+		expect(out).not.toContain('ac:name="code"');
+	});
+});
 
 describe('shouldReplaceRemotePageOnConflict', () => {
 	it('never replaces the topmost vault root binding when Confluence parentage disagrees', () => {

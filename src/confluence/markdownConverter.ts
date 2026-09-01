@@ -255,10 +255,11 @@ export class MarkdownConverter {
 		const seen = new Set<string>();
 		const out: DiagramBlock[] = [];
 		for (const b of blocks) {
-			const hash = await sha1Hex(b.content);
+			const norm = b.content.replace(/\r/g, '').replace(/\n+$/, '');
+			const hash = await sha1Hex(norm);
 			if (seen.has(hash)) continue;
 			seen.add(hash);
-			out.push({ hash, source: b.content, filename: `${lang}-${hash}.${ext}` });
+			out.push({ hash, source: norm, filename: `${lang}-${hash}.${ext}` });
 		}
 		return out;
 	}
@@ -269,9 +270,10 @@ export class MarkdownConverter {
 		const blocks = extractFenceBlocks(markdown);
 		for (const b of blocks) {
 			if (b.lang !== 'mermaid' && b.lang !== 'plantuml' && b.lang !== 'drawio' && b.lang !== 'draw.io') continue;
-			const key = `${b.lang}|${b.content}`;
+			const norm = b.content.replace(/\r/g, '').replace(/\n+$/, '');
+			const key = `${b.lang}|${norm}`;
 			if (map.has(key)) continue;
-			map.set(key, await sha1Hex(b.content));
+			map.set(key, await sha1Hex(norm));
 		}
 		return map;
 	}
@@ -286,9 +288,10 @@ export class MarkdownConverter {
 			// `token.info` may be a whole string like `plantuml id=foo` with attributes,
 			// so to match extractFenceBlocks / markdown-it conventions, only the first token is used as the lang.
 			const lang = (token.info || '').trim().split(/\s+/)[0]!.toLowerCase();
-			// markdown-it fence token content ends with a trailing \n,
-			// while extractFenceBlocks omits it, so normalize before looking it up in the map.
-			const content = token.content.replace(/\n+$/, '');
+			// markdown-it fence token content may end with a trailing newline; extractFenceBlocks strips it,
+			// but some editors preserve a final blank line before the closing fence. Normalize both forms so
+			// the hash lookup remains stable and the rendered attachment matches the uploaded file.
+			const content = token.content.replace(/\n+$/, '').replace(/\r/g, '');
 
 			if (lang === 'mermaid' && ctx.renderMermaidToPng) {
 				const hash = fenceHashes.get(`mermaid|${content}`);
