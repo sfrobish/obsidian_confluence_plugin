@@ -18,7 +18,7 @@ import { Logger } from '../utils/logger';
 import { SyncConfluenceSettings } from '../settings';
 import { AttachmentRecord, BatchSyncResult, FileSyncResult, NoteBinding, SyncTarget, ConfluenceInstance, PerInstanceUsernameMap } from '../types';
 import { InstanceResolver } from './instanceResolver';
-import { shouldReplaceRemotePageOnConflict } from './structureConflict';
+import { collectAncestorIndexPaths, shouldReplaceRemotePageOnConflict } from './structureConflict';
 import { t } from '../i18n';
 
 export interface SyncEngineDeps {
@@ -714,27 +714,13 @@ export class SyncEngine {
 	}
 
 	private async resolveFolderParentPageId(file: TFile): Promise<string | null> {
-		let current = file.path.includes('/')
-			? file.path.split('/').slice(0, -1).join('/')
-			: '';
-
-		if (file.basename === '_index') {
-			current = current.includes('/')
-				? current.slice(0, current.lastIndexOf('/'))
-				: '';
-		}
-
-		while (current.length > 0) {
-			const indexPath = `${current}/_index.md`;
+		const filePath = file.path.replace(/\\/g, '/');
+		for (const indexPath of collectAncestorIndexPaths(filePath)) {
 			const indexFile = this.deps.app.vault.getAbstractFileByPath(indexPath);
-			if (indexFile && indexFile instanceof TFile) {
-				const fm = this.deps.app.metadataCache.getFileCache(indexFile)?.frontmatter as Record<string, unknown> | undefined;
-				const pageId = this.resolveFrontmatterPageId(fm);
-				if (pageId) return pageId;
-			}
-			current = current.includes('/')
-				? current.slice(0, current.lastIndexOf('/'))
-				: '';
+			if (!(indexFile instanceof TFile)) continue;
+			const fm = this.deps.app.metadataCache.getFileCache(indexFile)?.frontmatter as Record<string, unknown> | undefined;
+			const pageId = this.resolveFrontmatterPageId(fm);
+			if (pageId) return pageId;
 		}
 		return null;
 	}

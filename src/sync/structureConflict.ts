@@ -7,6 +7,23 @@ export interface StructureConflictCheck {
 	defaultBehavior: boolean;
 }
 
+export function collectAncestorIndexPaths(filePath: string): string[] {
+	const normalized = filePath.replace(/\\/g, '/').trim();
+	if (!normalized || !normalized.endsWith('.md')) return [];
+
+	const segments = normalized.split('/').filter(Boolean);
+	if (segments.length <= 1) return [];
+
+	const folderSegments = segments.slice(0, -1);
+	if (folderSegments.length === 0) return [];
+
+	const paths: string[] = [];
+	for (let i = folderSegments.length; i >= 1; i--) {
+		paths.push(`${folderSegments.slice(0, i).join('/')}/_index.md`);
+	}
+	return paths;
+}
+
 export function shouldReplaceRemotePageOnConflict({
 	currentParentId,
 	expectedParentId,

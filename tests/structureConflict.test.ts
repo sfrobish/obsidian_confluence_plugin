@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { shouldReplaceRemotePageOnConflict } from '../src/sync/structureConflict';
+import { collectAncestorIndexPaths, shouldReplaceRemotePageOnConflict } from '../src/sync/structureConflict';
 
 describe('shouldReplaceRemotePageOnConflict', () => {
 	it('never replaces the topmost vault root binding when Confluence parentage disagrees', () => {
@@ -57,5 +57,13 @@ describe('shouldReplaceRemotePageOnConflict', () => {
 			defaultBehavior: true,
 		});
 		expect(result).toBe(false);
+	});
+
+	it('walks the vault hierarchy from the immediate folder upward, not from the vault root downward', () => {
+		expect(collectAncestorIndexPaths('docs/team/notes/foo.md')).toEqual([
+			'docs/team/notes/_index.md',
+			'docs/team/_index.md',
+			'docs/_index.md',
+		]);
 	});
 });
