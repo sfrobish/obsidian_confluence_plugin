@@ -8,13 +8,13 @@ describe('markdown Mermaid fence conversion', () => {
 	it('replaces a fenced Mermaid block even when there is a blank line before the closing fence', async () => {
 		const converter = new MarkdownConverter({} as any);
 		const md = '```mermaid\nflowchart TD\nA-->B\n\n```\n';
-		const refs = await converter.extractReferences(md, 'x.md', { mermaidExt: 'svg' });
+		const refs = await converter.extractReferences(md, 'x.md');
 		const ctx = {
 			attachedFilenames: new Set<string>(),
 			mermaidFilenameByHash: new Map(refs.mermaid.map((b) => [b.hash, b.filename])),
 			drawioFilenameByHash: new Map(),
 			drawioFilenameByPath: new Map(),
-			renderMermaidToPng: true,
+			renderMermaidToSvg: true,
 			renderDrawioToSvg: false,
 			defaultImageWidthPx: 0,
 			stripSupplementaryChars: false,

@@ -100,10 +100,8 @@ The pipeline supports these renderers:
 
 #### Mermaid
 - Mermaid fences are discovered and hashed.
-- If rendering is enabled, a Mermaid block is rendered into a generated file attachment.
-- The generated file may be `.png` or `.svg` depending on the selected renderer.
+- If rendering is enabled, a Mermaid block is rendered into a generated SVG file attachment via Obsidian's built-in mermaid engine — offline, no external service.
 - Final Confluence page output replaces the Mermaid code fence with an `ac:image` attachment.
-- Current implementation supports both Kroki-based rendering and Obsidian-native Mermaid SVG rendering.
 
 #### Draw.io
 - Draw.io files are converted to SVG or rendered output and uploaded as attachments.

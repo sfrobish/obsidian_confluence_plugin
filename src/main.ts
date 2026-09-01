@@ -130,10 +130,13 @@ export default class PublishConfluencePlugin extends Plugin {
 			/** Pre-rename field names (plugin used to call this "sync"); read as a fallback below. */
 			syncInterval?: number;
 			syncOnStartup?: boolean;
+			/** Pre-refactor field name (kroki/PNG rendering was removed; Mermaid is always rendered to SVG now). */
+			renderMermaidToPng?: boolean;
 		}) | null;
-		const { legacyMigrationVersion, syncInterval, syncOnStartup, ...rest } = data ?? {};
+		const { legacyMigrationVersion, syncInterval, syncOnStartup, renderMermaidToPng, ...rest } = data ?? {};
 		if (rest.publishInterval === undefined && syncInterval !== undefined) rest.publishInterval = syncInterval;
 		if (rest.publishOnStartup === undefined && syncOnStartup !== undefined) rest.publishOnStartup = syncOnStartup;
+		if (rest.renderMermaidToSvg === undefined && renderMermaidToPng !== undefined) rest.renderMermaidToSvg = renderMermaidToPng;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, rest);
 		this.legacyMigrationVersion = legacyMigrationVersion ?? null;
 		if (this.legacyMigrationVersion !== LEGACY_MIGRATION_VERSION) {
@@ -777,8 +780,7 @@ export default class PublishConfluencePlugin extends Plugin {
 		try {
 			const converter = new MarkdownConverter(this.app);
 			const markdown = await this.app.vault.cachedRead(file);
-			const mermaidExt: 'svg' | 'png' = this.settings.mermaidRenderer === 'obsidian' ? 'svg' : 'png';
-			const refs = await converter.extractReferences(markdown, file.path, { mermaidExt });
+			const refs = await converter.extractReferences(markdown, file.path);
 			// `stripSupplementaryChars` is per-instance. For the preview we pick
 			// the instance whose baseUrl matches the note's confluence_url —
 			// that's the one that would actually consume the output. Fall back
@@ -795,7 +797,7 @@ export default class PublishConfluencePlugin extends Plugin {
 				mermaidFilenameByHash: new Map(refs.mermaid.map((b) => [b.hash, b.filename])),
 				drawioFilenameByHash: new Map(refs.drawio.map((b) => [b.hash, b.filename])),
 				drawioFilenameByPath: new Map(refs.drawio.filter((b) => b.sourcePath).map((b) => [b.sourcePath!, b.filename])),
-				renderMermaidToPng: this.settings.renderMermaidToPng,
+				renderMermaidToSvg: this.settings.renderMermaidToSvg,
 				renderDrawioToSvg: this.settings.renderDrawioToSvg,
 				defaultImageWidthPx: this.settings.defaultImageWidthPx,
 				stripSupplementaryChars: matchedInst?.stripSupplementaryChars ?? false,

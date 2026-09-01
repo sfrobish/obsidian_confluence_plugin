@@ -33,14 +33,14 @@ export type WikilinkResolution = string | ResolvedWikilink;
 export interface ConvertContext {
 	/** filename -> uploaded attachment record (used in convert phase to decide whether img should be replaced with ac:image) */
 	attachedFilenames: Set<string>;
-	/** hash -> successfully uploaded mermaid PNG filename */
+	/** hash -> successfully uploaded mermaid SVG filename */
 	mermaidFilenameByHash: Map<string, string>;
 	/** hash -> successfully uploaded draw.io SVG filename */
 	drawioFilenameByHash: Map<string, string>;
 	/** source path -> successfully uploaded draw.io SVG filename (embedded local .drawio files) */
 	drawioFilenameByPath: Map<string, string>;
 	/** Configuration flags */
-	renderMermaidToPng: boolean;
+	renderMermaidToSvg: boolean;
 	renderDrawioToSvg: boolean;
 	/** Default display width for ordinary attachment images on Confluence (px); 0 = original size */
 	defaultImageWidthPx: number;
@@ -85,13 +85,12 @@ export class MarkdownConverter {
 	async extractReferences(
 		markdown: string,
 		sourcePath: string,
-		opts?: { mermaidExt?: 'svg' | 'png' },
 	): Promise<ExtractedReferences> {
 		const body = stripFrontmatter(markdown);
 		const preprocessed = preprocessObsidianSyntax(body);
 
 		const attachments = this.collectAttachments(preprocessed, sourcePath);
-		const mermaid = await this.collectDiagrams(preprocessed, 'mermaid', opts?.mermaidExt ?? 'png');
+		const mermaid = await this.collectDiagrams(preprocessed, 'mermaid');
 		const drawio = await this.collectDrawio(preprocessed, sourcePath);
 
 		return { attachments, mermaid, drawio };
@@ -243,8 +242,7 @@ export class MarkdownConverter {
 
 	private async collectDiagrams(
 		markdown: string,
-		lang: 'mermaid' | 'drawio',
-		ext: 'svg' | 'png',
+		lang: 'mermaid',
 	): Promise<DiagramBlock[]> {
 		const blocks = extractFenceBlocks(markdown).filter((b) => b.lang === lang);
 		const seen = new Set<string>();
@@ -254,7 +252,7 @@ export class MarkdownConverter {
 			const hash = await sha1Hex(norm);
 			if (seen.has(hash)) continue;
 			seen.add(hash);
-			out.push({ hash, source: norm, filename: `${lang}-${hash}.${ext}` });
+			out.push({ hash, source: norm, filename: `${lang}-${hash}.svg` });
 		}
 		return out;
 	}
@@ -288,7 +286,7 @@ export class MarkdownConverter {
 			// the hash lookup remains stable and the rendered attachment matches the uploaded file.
 			const content = token.content.replace(/\n+$/, '').replace(/\r/g, '');
 
-			if (lang === 'mermaid' && ctx.renderMermaidToPng) {
+			if (lang === 'mermaid' && ctx.renderMermaidToSvg) {
 				const hash = fenceHashes.get(`mermaid|${content}`);
 				const filename = hash ? ctx.mermaidFilenameByHash.get(hash) : undefined;
 				if (filename) return renderAcImage(filename, '');

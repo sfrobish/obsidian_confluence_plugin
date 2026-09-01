@@ -9,7 +9,7 @@ import {
 	ResolvedWikilink,
 } from '../confluence/markdownConverter';
 import { AttachmentUploader } from '../confluence/attachmentUploader';
-import { IMermaidRenderer, KrokiMermaidRenderer, ObsidianMermaidRenderer } from '../confluence/mermaidRenderer';
+import { renderAllMermaid } from '../confluence/mermaidRenderer';
 import { renderAllDrawio } from '../confluence/drawiorender';
 import { readBindingFromCache, writeBinding, getLastHashForTarget, TargetBindingPatch } from '../frontmatter/handler';
 import { scanBoundNotes } from './noteScanner';
@@ -87,7 +87,7 @@ class TargetPublishFailure extends Error {
 export class PublishEngine {
 	private converter: MarkdownConverter;
 	private uploader: AttachmentUploader;
-	private mermaid: IMermaidRenderer | null = null;
+	private mermaidEnabled = false;
 	private drawioEnabled = false;
 	private busy = false;
 	private instanceResolver: InstanceResolver;
@@ -98,11 +98,7 @@ export class PublishEngine {
 		this.uploader = new AttachmentUploader(deps.app, deps.api, deps.logger, {
 			maxSizeBytes: Math.max(1, deps.settings.maxAttachmentSizeMB) * 1024 * 1024,
 		});
-		if (deps.settings.renderMermaidToPng) {
-			this.mermaid = deps.settings.mermaidRenderer === 'obsidian'
-				? new ObsidianMermaidRenderer(deps.app, deps.logger)
-				: new KrokiMermaidRenderer(deps.settings.mermaidRenderUrl, deps.logger);
-		}
+		this.mermaidEnabled = deps.settings.renderMermaidToSvg;
 		this.drawioEnabled = deps.settings.renderDrawioToSvg;
 	}
 
@@ -202,9 +198,7 @@ export class PublishEngine {
 				stripSupplementaryChars: this.deps.instance.stripSupplementaryChars,
 				defaultImageWidthPx: this.deps.settings.defaultImageWidthPx,
 			});
-			const refs = await this.converter.extractReferences(markdown, path, {
-				mermaidExt: this.mermaid?.extension(),
-			});
+			const refs = await this.converter.extractReferences(markdown, path);
 			const mermaidRendered = await this.renderMermaidOnce(refs);
 			const drawioRendered = await this.renderDrawioOnce(refs);
 			const mermaidFilenameByHash = new Map<string, string>();
@@ -228,7 +222,7 @@ export class PublishEngine {
 				mermaidFilenameByHash,
 				drawioFilenameByHash,
 				drawioFilenameByPath,
-				renderMermaidToPng: this.deps.settings.renderMermaidToPng,
+				renderMermaidToSvg: this.deps.settings.renderMermaidToSvg,
 				renderDrawioToSvg: this.deps.settings.renderDrawioToSvg,
 				defaultImageWidthPx: this.deps.settings.defaultImageWidthPx,
 				stripSupplementaryChars: this.deps.instance.stripSupplementaryChars,
@@ -740,8 +734,8 @@ export class PublishEngine {
 	}
 
 	private async renderMermaidOnce(refs: ExtractedReferences): Promise<RenderedDiagram[]> {
-		if (!this.mermaid || refs.mermaid.length === 0) return [];
-		const rendered = await this.mermaid.renderAll(refs.mermaid);
+		if (!this.mermaidEnabled || refs.mermaid.length === 0) return [];
+		const rendered = await renderAllMermaid(refs.mermaid, this.deps.app, this.deps.logger);
 		return rendered.filter((r): r is RenderedDiagram => r !== null);
 	}
 
@@ -999,13 +993,7 @@ export class PublishEngine {
 
 	/** Called after re-reading settings to rebuild the renderer instances. */
 	rebuildRenderers(): void {
-		if (this.deps.settings.renderMermaidToPng) {
-			this.mermaid = this.deps.settings.mermaidRenderer === 'obsidian'
-				? new ObsidianMermaidRenderer(this.deps.app, this.deps.logger)
-				: new KrokiMermaidRenderer(this.deps.settings.mermaidRenderUrl, this.deps.logger);
-		} else {
-			this.mermaid = null;
-		}
+		this.mermaidEnabled = this.deps.settings.renderMermaidToSvg;
 		this.uploader = new AttachmentUploader(this.deps.app, this.deps.api, this.deps.logger, {
 			maxSizeBytes: Math.max(1, this.deps.settings.maxAttachmentSizeMB) * 1024 * 1024,
 		});

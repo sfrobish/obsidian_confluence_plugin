@@ -36,10 +36,7 @@ export interface PublishConfluenceSettings {
 	defaultImageWidthPx: number;
 
 	// ========== Diagram rendering ==========
-	renderMermaidToPng: boolean;
-	/** kroki = use an external HTTP service to render PNG; obsidian = use Obsidian's built-in mermaid engine to render SVG */
-	mermaidRenderer: 'kroki' | 'obsidian';
-	mermaidRenderUrl: string;
+	renderMermaidToSvg: boolean;
 	renderDrawioToSvg: boolean;
 }
 
@@ -65,9 +62,7 @@ export const DEFAULT_SETTINGS: PublishConfluenceSettings = {
 	maxAttachmentSizeMB: 10,
 	defaultImageWidthPx: 192,
 
-	renderMermaidToPng: true,
-	mermaidRenderer: 'kroki',
-	mermaidRenderUrl: 'https://kroki.io/mermaid/png',
+	renderMermaidToSvg: true,
 	renderDrawioToSvg: true,
 };
 
@@ -251,51 +246,12 @@ export class PublishConfluenceSettingTab extends PluginSettingTab {
 			new Setting(el)
 				.setName(t('settings.mermaid.toggleName'))
 				.setDesc(t('settings.mermaid.toggleDesc'))
-				.addToggle((tx) => tx.setValue(s.renderMermaidToPng).onChange(async (v) => {
-					s.renderMermaidToPng = v;
+				.addToggle((tx) => tx.setValue(s.renderMermaidToSvg).onChange(async (v) => {
+					s.renderMermaidToSvg = v;
 					await this.plugin.saveSettings();
 					void this.plugin.rebuildPublishEngine();
 					this.display();
 				}));
-
-			if (s.renderMermaidToPng) {
-				new Setting(el)
-					.setName(t('settings.mermaid.rendererName'))
-					.setDesc(t('settings.mermaid.rendererDesc'))
-					.addDropdown((d) => d
-						.addOption('kroki', t('settings.mermaid.rendererKroki'))
-						.addOption('obsidian', t('settings.mermaid.rendererObsidian'))
-						.setValue(s.mermaidRenderer)
-						.onChange(async (v) => {
-							s.mermaidRenderer = (v === 'obsidian' ? 'obsidian' : 'kroki');
-							await this.plugin.saveSettings();
-							void this.plugin.rebuildPublishEngine();
-							this.display();
-						}));
-
-				const rendererHint = el.createEl('div', { cls: 'publish-confluence-renderer-hint setting-item-description' });
-				if (s.mermaidRenderer === 'kroki') {
-					rendererHint.createEl('p', { text: t('settings.mermaid.krokiPros') });
-					rendererHint.createEl('p', { text: t('settings.mermaid.krokiCons') });
-				} else {
-					rendererHint.createEl('p', { text: t('settings.mermaid.obsidianPros') });
-					rendererHint.createEl('p', { text: t('settings.mermaid.obsidianCons') });
-				}
-
-				if (s.mermaidRenderer === 'kroki') {
-					new Setting(el)
-						.setName(t('settings.mermaid.urlName'))
-						.setDesc(t('settings.mermaid.urlDesc'))
-						.addText((tx) => tx
-							.setPlaceholder('https://kroki.io/mermaid/png')
-							.setValue(s.mermaidRenderUrl)
-							.onChange(async (v) => {
-								s.mermaidRenderUrl = v.trim() || DEFAULT_SETTINGS.mermaidRenderUrl;
-								await this.plugin.saveSettings();
-								void this.plugin.rebuildPublishEngine();
-							}));
-				}
-			}
 		});
 
 		// ===== UI behavior =====
