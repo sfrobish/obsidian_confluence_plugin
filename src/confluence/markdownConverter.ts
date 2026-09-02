@@ -289,13 +289,13 @@ export class MarkdownConverter {
 			if (lang === 'mermaid' && ctx.renderMermaidToSvg) {
 				const hash = fenceHashes.get(`mermaid|${content}`);
 				const filename = hash ? ctx.mermaidFilenameByHash.get(hash) : undefined;
-				if (filename) return renderAcImage(filename, '', ctx.defaultImageWidthPx);
+				if (filename) return renderAcImage(filename, '');
 			}
 			if ((lang === 'drawio' || lang === 'draw.io') && ctx.renderDrawioToSvg) {
 				const lookupLang = lang === 'draw.io' ? 'draw.io' : 'drawio';
 				const hash = fenceHashes.get(`${lookupLang}|${content}`);
 				const filename = hash ? ctx.drawioFilenameByHash.get(hash) : undefined;
-				if (filename) return renderAcImage(filename, '', ctx.defaultImageWidthPx);
+				if (filename) return renderAcImage(filename, '');
 			}
 			return renderAcCode(lang, content);
 		};
@@ -316,7 +316,7 @@ export class MarkdownConverter {
 			const filename = decoded.split('/').pop() ?? decoded;
 			if (/\.drawio(?:\.|$)/i.test(filename) && ctx.renderDrawioToSvg) {
 				const maybe = ctx.drawioFilenameByPath.get(decoded) ?? ctx.drawioFilenameByPath.get(filename) ?? undefined;
-				if (maybe) return renderAcImage(maybe, alt, ctx.defaultImageWidthPx);
+				if (maybe) return renderAcImage(maybe, alt);
 			}
 			if (ctx.attachedFilenames.has(filename)) {
 				return renderAcImage(filename, alt, ctx.defaultImageWidthPx);
