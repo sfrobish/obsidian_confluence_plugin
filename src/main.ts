@@ -14,10 +14,10 @@ import {
 	PublishConfluenceSettingTab,
 } from './settings';
 import { ConfluenceApi } from './confluence/api';
-import { extractReferences, convert as convertMarkdown } from './confluence/markdownConverter';
-import { PublishEngine } from './publish/publishEngine';
+import { extractReferences, convert as convertMarkdown } from './confluence/convertMarkdown';
+import { publishFiles, publishOne, type PublishContext } from './publish/publishNotes';
 import { scanBoundNotes } from './publish/noteScanner';
-import { InstanceResolver } from './publish/instanceResolver';
+import { groupByInstance, resolveInstance } from './publish/resolveInstances';
 import { Logger } from './utils/logger';
 import { StatusBarManager } from './ui/statusBar';
 import { PropertyActionsManager } from './ui/propertyActions';
@@ -60,7 +60,7 @@ export default class PublishConfluencePlugin extends Plugin {
 	statusBar: StatusBarManager | null = null;
 	propertyActions: PropertyActionsManager | null = null;
 
-	private engines: Map<string, PublishEngine> = new Map();
+	private engines: Map<string, PublishContext> = new Map();
 	private publishIntervalToken: number | null = null;
 	private startupTimeoutToken: number | null = null;
 	/**
@@ -229,7 +229,7 @@ export default class PublishConfluencePlugin extends Plugin {
 				username: inst.username,
 				apiToken: tokenValue,
 			});
-			const engine = new PublishEngine({
+			this.engines.set(inst.id, {
 				app: this.app,
 				settings: this.settings,
 				logger: this.logger,
@@ -237,18 +237,12 @@ export default class PublishConfluencePlugin extends Plugin {
 				instance: inst,
 				instances: this.settings.instances,
 			});
-			this.engines.set(inst.id, engine);
 		}
 	}
 
-	/** Called when settings change, such as rebuilding the renderer. */
+	/** Called when settings change; rebuild each instance's publish context from current settings. */
 	async rebuildPublishEngine(): Promise<void> {
-		for (const engine of this.engines.values()) {
-			engine.rebuildRenderers();
-		}
-		if (this.engines.size === 0) {
-			await this.ensureEngines();
-		}
+		await this.ensureEngines();
 	}
 
 	/** Called when settings change token / baseUrl / username; forcibly rebuild the API and engine. */
@@ -268,12 +262,12 @@ export default class PublishConfluencePlugin extends Plugin {
 		instance: ConfluenceInstance,
 		files: TFile[],
 	): Promise<PerInstancePublishResult> {
-		const engine = this.engines.get(instance.id);
+		const engineDeps = this.engines.get(instance.id);
 		const baseResult = {
 			instanceName: instance.name,
 			instanceId: instance.id,
 		};
-		if (!engine) {
+		if (!engineDeps) {
 			return {
 				...baseResult,
 				total: files.length,
@@ -288,7 +282,7 @@ export default class PublishConfluencePlugin extends Plugin {
 				})),
 			};
 		}
-		const r = await engine.publishFiles(files);
+		const r = await publishFiles(engineDeps, files);
 		if (!r) {
 			return {
 				...baseResult,
@@ -330,8 +324,7 @@ export default class PublishConfluencePlugin extends Plugin {
 			return;
 		}
 		this.statusBar?.showPublishing(t('status.publishing'));
-		const resolver = new InstanceResolver({ instances: this.settings.instances });
-		const { groups, unmatched } = resolver.groupByInstance(files, this.app, this.settings.frontmatterKey);
+		const { groups, unmatched } = groupByInstance(this.settings.instances, files, this.app, this.settings.frontmatterKey);
 
 		const result: MultiInstanceBatchResult = {
 			instances: [],
@@ -382,8 +375,7 @@ export default class PublishConfluencePlugin extends Plugin {
 		}
 		this.statusBar?.showPublishing(folder.name + '/');
 		this.logger.info(`Publish folder ${folder.path}: ${files.length} bound notes`);
-		const resolver = new InstanceResolver({ instances: this.settings.instances });
-		const { groups, unmatched } = resolver.groupByInstance(files, this.app, this.settings.frontmatterKey);
+		const { groups, unmatched } = groupByInstance(this.settings.instances, files, this.app, this.settings.frontmatterKey);
 
 		const result: MultiInstanceBatchResult = {
 			instances: [],
@@ -424,12 +416,11 @@ export default class PublishConfluencePlugin extends Plugin {
 			return;
 		}
 		this.statusBar?.showPublishing(t('status.publishing'));
-		const resolver = new InstanceResolver({ instances: this.settings.instances });
 
-		// Multi-target files may span instances — route to every matched engine,
-		// not just the first. Each engine independently filters binding.targets
-		// to the subset it owns (see PublishEngine.targetBelongsToInstance).
-		const { groups } = resolver.groupByInstance([file], this.app, this.settings.frontmatterKey);
+		// Multi-target files may span instances — route to every matched instance,
+		// not just the first. Each publish run independently filters binding.targets
+		// to the subset that instance owns.
+		const { groups } = groupByInstance(this.settings.instances, [file], this.app, this.settings.frontmatterKey);
 		const matchedInstances = new Map<string, ConfluenceInstance>();
 		for (const group of groups.values()) {
 			matchedInstances.set(group.instance.id, group.instance);
@@ -449,8 +440,8 @@ export default class PublishConfluencePlugin extends Plugin {
 			unmatched: [],
 		};
 		for (const inst of matchedInstances.values()) {
-			const engine = this.engines.get(inst.id);
-			if (!engine) {
+			const engineDeps = this.engines.get(inst.id);
+			if (!engineDeps) {
 				result.instances.push({
 					instanceName: inst.name,
 					instanceId: inst.id,
@@ -469,7 +460,7 @@ export default class PublishConfluencePlugin extends Plugin {
 				result.failed += 1;
 				continue;
 			}
-			const r = await engine.publishOne(file);
+			const r = await publishOne(engineDeps, file);
 			if (!r) {
 				result.instances.push({
 					instanceName: inst.name,
@@ -787,9 +778,8 @@ export default class PublishConfluencePlugin extends Plugin {
 			// no instances yet.
 			const fm = (this.app.metadataCache.getFileCache(file)?.frontmatter ?? {}) as Frontmatter;
 			const fallbackUrl = extractFirstTargetUrl(fm, this.settings.frontmatterKey);
-			const resolver = new InstanceResolver({ instances: this.settings.instances });
 			const matchedInst = this.settings.instances.length > 0
-				? (resolver.resolve(fallbackUrl) ?? this.settings.instances[0]!)
+				? (resolveInstance(this.settings.instances, fallbackUrl) ?? this.settings.instances[0]!)
 				: null;
 			const xhtml = await convertMarkdown(this.app, markdown, file.path, {
 				attachedFilenames: new Set(refs.attachments.map((r) => r.filename)),

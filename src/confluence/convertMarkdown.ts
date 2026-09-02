@@ -2,7 +2,7 @@ import type { App } from 'obsidian';
 import MarkdownIt from 'markdown-it';
 import { AttachmentRef } from '../types';
 import { sha1Hex } from '../utils/hash';
-import { resolveAttachmentFile } from './attachmentUploader';
+import { resolveAttachmentFile } from './uploadAttachments';
 import { replaceMarkdownTocCallouts, replaceTocMarkersWithMacros } from './tocConverter';
 
 export interface DiagramBlock {
@@ -72,7 +72,7 @@ interface PreprocessOptions {
  *
  * Usage:
  *   1. await extractReferences(app, markdown, sourcePath) — gather attachment + mermaid lists
- *   2. Call AttachmentUploader / MermaidRenderer to upload/render
+ *   2. Call publishAttachments / MermaidRenderer to upload/render
  *   3. await convert(app, markdown, sourcePath, ctx) — render the final storage xhtml
  *
  * The work is split into two steps because rendering diagrams / uploading attachments is async + network-bound,

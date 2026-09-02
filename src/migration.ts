@@ -12,8 +12,8 @@
 import type { App, TFile } from 'obsidian';
 import * as yaml from 'js-yaml';
 import type { PublishConfluenceSettings } from './settings';
-import type { AttachmentRecord, PerInstanceUsernameMap, PublishTarget } from './types';
-import { InstanceResolver } from './publish/instanceResolver';
+import type { AttachmentRecord, ConfluenceInstance, PerInstanceUsernameMap, PublishTarget } from './types';
+import { resolveTargetInstance } from './publish/resolveInstances';
 import { readTargetsFromFrontmatter } from './frontmatter/handler';
 
 /**
@@ -290,7 +290,6 @@ export async function migrateLegacyFrontmatter(
 		return true;
 	});
 
-	const resolver = new InstanceResolver({ instances: settings.instances });
 	const urlKey = settings.frontmatterKey || 'confluence_url';
 	logger.info(`migrateLegacyFrontmatter: starting — scanning ${allFiles.length} files via disk read, ${settings.instances.length} configured instance(s)`);
 	let found = 0;
@@ -313,7 +312,7 @@ export async function migrateLegacyFrontmatter(
 			const ok = await writeMigratedFrontmatter(
 				app,
 				file,
-				resolver,
+				settings.instances,
 				urlKey,
 				fallbackInstanceId,
 			);
@@ -336,7 +335,7 @@ export async function migrateLegacyFrontmatter(
 async function writeMigratedFrontmatter(
 	app: App,
 	file: TFile,
-	resolver: InstanceResolver,
+	instances: ConfluenceInstance[],
 	urlKey: string,
 	fallbackInstanceId: string,
 ): Promise<boolean> {
@@ -351,7 +350,7 @@ async function writeMigratedFrontmatter(
 		const targets = readTargetsFromFrontmatter(fmRaw, urlKey).targets;
 		const routes = targets.map((target) => ({
 			target,
-			instanceId: resolver.resolveTarget(target)?.id ?? fallbackInstanceId,
+			instanceId: resolveTargetInstance(instances, target)?.id ?? fallbackInstanceId,
 		}));
 		if (typeof fmRaw['confluence_last_hash'] === 'string') {
 			const hash = fmRaw['confluence_last_hash'] as string;

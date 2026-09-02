@@ -89,7 +89,7 @@ The plugin also preserves scalar / CSV / array formatting style when it rewrites
 
 ### 5.4 Attachment handling
 - Local image and media references are discovered from markdown.
-- Resolved local files are uploaded to the Confluence page via `AttachmentUploader`.
+- Resolved local files are uploaded to the Confluence page via `uploadAttachments`.
 - Uploaded attachments are tracked by filename and SHA-1 hash.
 - The page's attachment cache is stored under frontmatter `confluence_attachments` in a per-instance nested record.
 
@@ -142,7 +142,7 @@ The API layer in [src/confluence/api.ts](src/confluence/api.ts):
 - supports Electron session/cookie flows when required by the desktop app
 
 ### 6.4 Markdown conversion
-The markdown conversion layer in [src/confluence/markdownConverter.ts](src/confluence/markdownConverter.ts):
+The markdown conversion layer in [src/confluence/convertMarkdown.ts](src/confluence/convertMarkdown.ts):
 - strips frontmatter
 - preprocesses Obsidian-specific syntax
 - masks inline code and fenced code blocks to avoid rewriting example syntax
@@ -153,7 +153,7 @@ The markdown conversion layer in [src/confluence/markdownConverter.ts](src/confl
 - converts Obsidian-specific link forms to Confluence-friendly structures
 
 ### 6.5 Publish engine
-The orchestration layer in [src/publish/publishEngine.ts](src/publish/publishEngine.ts):
+The orchestration layer in [src/publish/publishNotes.ts](src/publish/publishNotes.ts):
 - resolves the effective target
 - computes note content hash
 - extracts references

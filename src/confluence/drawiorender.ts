@@ -1,4 +1,4 @@
-import { DiagramBlock } from './markdownConverter';
+import { DiagramBlock } from './convertMarkdown';
 import { Logger } from '../utils/logger';
 
 function getRuntimeLocationInfo(): string {

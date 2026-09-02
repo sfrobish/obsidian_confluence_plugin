@@ -1,5 +1,5 @@
 import { App, Component, MarkdownRenderer } from 'obsidian';
-import { DiagramBlock } from './markdownConverter';
+import { DiagramBlock } from './convertMarkdown';
 import { Logger } from '../utils/logger';
 
 export type RenderedMermaid = { block: DiagramBlock; png: ArrayBuffer };
