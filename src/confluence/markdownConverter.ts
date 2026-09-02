@@ -289,13 +289,13 @@ export class MarkdownConverter {
 			if (lang === 'mermaid' && ctx.renderMermaidToSvg) {
 				const hash = fenceHashes.get(`mermaid|${content}`);
 				const filename = hash ? ctx.mermaidFilenameByHash.get(hash) : undefined;
-				if (filename) return renderAcImage(filename, '');
+				if (filename) return renderAcImage(filename, '', ctx.defaultImageWidthPx);
 			}
 			if ((lang === 'drawio' || lang === 'draw.io') && ctx.renderDrawioToSvg) {
 				const lookupLang = lang === 'draw.io' ? 'draw.io' : 'drawio';
 				const hash = fenceHashes.get(`${lookupLang}|${content}`);
 				const filename = hash ? ctx.drawioFilenameByHash.get(hash) : undefined;
-				if (filename) return renderAcImage(filename, '');
+				if (filename) return renderAcImage(filename, '', ctx.defaultImageWidthPx);
 			}
 			return renderAcCode(lang, content);
 		};
