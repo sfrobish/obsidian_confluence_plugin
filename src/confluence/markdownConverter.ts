@@ -71,289 +71,287 @@ interface PreprocessOptions {
  * markdown → Confluence storage XHTML converter.
  *
  * Usage:
- *   1. await extractReferences(markdown, sourcePath) — gather attachment + mermaid lists
+ *   1. await extractReferences(app, markdown, sourcePath) — gather attachment + mermaid lists
  *   2. Call AttachmentUploader / MermaidRenderer to upload/render
- *   3. await convert(markdown, sourcePath, ctx) — render the final storage xhtml
+ *   3. await convert(app, markdown, sourcePath, ctx) — render the final storage xhtml
  *
  * The work is split into two steps because rendering diagrams / uploading attachments is async + network-bound,
  * while markdown-it itself is synchronous; the caller should finish the network-heavy work first, and the convert
  * phase only looks up the precomputed tables.
  */
-export class MarkdownConverter {
-	constructor(private app: App) {}
+export async function extractReferences(
+	app: App,
+	markdown: string,
+	sourcePath: string,
+): Promise<ExtractedReferences> {
+	const body = stripFrontmatter(markdown);
+	const preprocessed = preprocessObsidianSyntax(body);
 
-	async extractReferences(
-		markdown: string,
-		sourcePath: string,
-	): Promise<ExtractedReferences> {
-		const body = stripFrontmatter(markdown);
-		const preprocessed = preprocessObsidianSyntax(body);
+	const attachments = collectAttachments(app, preprocessed, sourcePath);
+	const mermaid = await collectDiagrams(preprocessed, 'mermaid');
+	const drawio = await collectDrawio(app, preprocessed, sourcePath);
 
-		const attachments = this.collectAttachments(preprocessed, sourcePath);
-		const mermaid = await this.collectDiagrams(preprocessed, 'mermaid');
-		const drawio = await this.collectDrawio(preprocessed, sourcePath);
+	return { attachments, mermaid, drawio };
+}
 
-		return { attachments, mermaid, drawio };
+export async function convert(app: App, markdown: string, sourcePath: string, ctx: ConvertContext): Promise<string> {
+	const body = stripFrontmatter(markdown);
+	const preprocessed = preprocessObsidianSyntax(body, {
+		resolveWikilink: ctx.resolveWikilink,
+		resolveMention: ctx.resolveMention,
+		sourcePath,
+	});
+
+	// Precompute a hash for each fence block so the renderer can look it up synchronously
+	const fenceHashMap = await buildFenceHashMap(preprocessed);
+
+	const md = buildRenderer(ctx, fenceHashMap);
+	const html = md.render(preprocessed);
+
+	return postProcessHtml(html, ctx);
+}
+
+/**
+ * Compute a stable hash of the markdown content for last_hash deduplication.
+ * Include the resolver in the hash as well: when a peer page URL changes, it triggers a re-upload.
+ */
+export async function computeContentHash(
+	app: App,
+	markdown: string,
+	sourcePath: string,
+	opts?: {
+		resolveWikilink?: (linkpath: string, sourcePath: string) => WikilinkResolution | null;
+		resolveMention?: (linkpath: string, sourcePath: string) => string | null;
+		stripSupplementaryChars?: boolean;
+		defaultImageWidthPx?: number;
+	},
+): Promise<string> {
+	const body = stripFrontmatter(markdown);
+	const preprocessed = preprocessObsidianSyntax(body, {
+		resolveWikilink: opts?.resolveWikilink,
+		resolveMention: opts?.resolveMention,
+		sourcePath,
+	});
+	// Notes containing supplementary characters (emoji, etc.) are affected by the strip flag in the final output,
+	// but the hash is computed from markdown rather than output. Without a salt, pages previously published in placeholder
+	// form would be permanently skipped because of the hash match, making the flag effectively useless. Only salt the
+	// affected notes: when the flag changes, only notes containing emoji are re-pushed; others still skip normally.
+	// When strip=true, do not salt so the old stored hashes from previous versions (which always stripped) remain compatible.
+	const hasSupplementary = /[\u{10000}-\u{10FFFF}]/u.test(preprocessed);
+	const supplementarySalt = !opts?.stripSupplementaryChars && hasSupplementary ? '\0keep-supplementary' : '';
+	// Display width changes the final storage XHTML and must be included in the hash; otherwise, changing only the setting would hit
+	// last_hash and skip the publish. Only salt notes that contain local images to avoid needless re-pushes for image-free pages.
+	const hasLocalImages = collectAttachments(app, preprocessed, sourcePath).length > 0;
+	const width = normalizeImageWidth(opts?.defaultImageWidthPx);
+	const imageWidthSalt = hasLocalImages ? `\0image-width:${width}` : '';
+	return sha1Hex(preprocessed + supplementarySalt + imageWidthSalt);
+}
+
+function collectAttachments(app: App, markdown: string, sourcePath: string): AttachmentRef[] {
+	// Mask fenced / inline code regions to avoid mistaking ![[...]] / ![](...) in code examples for real attachment references
+	const { masked } = maskCodeRegions(markdown);
+	const refs: AttachmentRef[] = [];
+	const seen = new Set<string>();
+	if (masked.match(/\.drawio(?:\.|$)/i)) {
+		// Draw.io files are rendered via the dedicated diagram pipeline; do not upload them as ordinary attachments.
 	}
 
-	async convert(markdown: string, sourcePath: string, ctx: ConvertContext): Promise<string> {
-		const body = stripFrontmatter(markdown);
-		const preprocessed = preprocessObsidianSyntax(body, {
-			resolveWikilink: ctx.resolveWikilink,
-			resolveMention: ctx.resolveMention,
-			sourcePath,
-		});
-
-		// Precompute a hash for each fence block so the renderer can look it up synchronously
-		const fenceHashMap = await this.buildFenceHashMap(preprocessed);
-
-		const md = this.buildRenderer(ctx, fenceHashMap);
-		const html = md.render(preprocessed);
-
-		return postProcessHtml(html, ctx);
+	// Obsidian embed:![[file.png|alt]] / ![[folder/file.png]]
+	// `\\?\|` handles escaped pipes inside markdown tables (`\|`); otherwise the backslash gets swallowed into the linkpath
+	const embedRe = /!\[\[([^\]\n|\\]+)(?:\\?\|([^\]\n]*))?\]\]/g;
+	let m: RegExpExecArray | null;
+	while ((m = embedRe.exec(masked)) !== null) {
+		const linkpath = m[1]!.trim();
+		// Note/heading/block embeds (![[note#section]] / ![[note#^id]]) are not attachments; skip them
+		if (linkpath.includes('#')) continue;
+		const alt = (m[2] ?? '').trim();
+		const tfile = resolveAttachmentFile(app, linkpath, sourcePath);
+		const filename = tfile?.name ?? linkpath.split('/').pop() ?? linkpath;
+		if (/\.drawio(?:\.|$)/i.test(filename)) continue;
+		const key = `embed:${filename}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		refs.push({ rawMatch: m[0], linkpath, alt, tfile, filename });
 	}
 
-	/**
-	 * Compute a stable hash of the markdown content for last_hash deduplication.
-	 * Include the resolver in the hash as well: when a peer page URL changes, it triggers a re-upload.
-	 */
-	async computeContentHash(
-		markdown: string,
-		sourcePath: string,
-		opts?: {
-			resolveWikilink?: (linkpath: string, sourcePath: string) => WikilinkResolution | null;
-			resolveMention?: (linkpath: string, sourcePath: string) => string | null;
-			stripSupplementaryChars?: boolean;
-			defaultImageWidthPx?: number;
-		},
-	): Promise<string> {
-		const body = stripFrontmatter(markdown);
-		const preprocessed = preprocessObsidianSyntax(body, {
-			resolveWikilink: opts?.resolveWikilink,
-			resolveMention: opts?.resolveMention,
-			sourcePath,
-		});
-		// Notes containing supplementary characters (emoji, etc.) are affected by the strip flag in the final output,
-		// but the hash is computed from markdown rather than output. Without a salt, pages previously published in placeholder
-		// form would be permanently skipped because of the hash match, making the flag effectively useless. Only salt the
-		// affected notes: when the flag changes, only notes containing emoji are re-pushed; others still skip normally.
-		// When strip=true, do not salt so the old stored hashes from previous versions (which always stripped) remain compatible.
-		const hasSupplementary = /[\u{10000}-\u{10FFFF}]/u.test(preprocessed);
-		const supplementarySalt = !opts?.stripSupplementaryChars && hasSupplementary ? '\0keep-supplementary' : '';
-		// Display width changes the final storage XHTML and must be included in the hash; otherwise, changing only the setting would hit
-		// last_hash and skip the publish. Only salt notes that contain local images to avoid needless re-pushes for image-free pages.
-		const hasLocalImages = this.collectAttachments(preprocessed, sourcePath).length > 0;
-		const width = normalizeImageWidth(opts?.defaultImageWidthPx);
-		const imageWidthSalt = hasLocalImages ? `\0image-width:${width}` : '';
-		return sha1Hex(preprocessed + supplementarySalt + imageWidthSalt);
+	// Standard markdown image: ![alt](path "title")
+	// Only relative paths or URLs without a scheme are treated as local attachments
+	const imgRe = /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+	while ((m = imgRe.exec(masked)) !== null) {
+		const alt = m[1] ?? '';
+		const path = m[2]!;
+		if (/^[a-z][a-z0-9+\-.]*:\/\//i.test(path) || path.startsWith('data:')) continue;
+		if (path.includes('#')) continue;
+		const decoded = tryDecode(path);
+		const tfile = resolveAttachmentFile(app, decoded, sourcePath);
+		const filename = tfile?.name ?? decoded.split('/').pop() ?? decoded;
+		if (/\.drawio(?:\.|$)/i.test(filename)) continue;
+		const key = `img:${filename}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		refs.push({ rawMatch: m[0], linkpath: decoded, alt, tfile, filename });
 	}
 
-	private collectAttachments(markdown: string, sourcePath: string): AttachmentRef[] {
-		// Mask fenced / inline code regions to avoid mistaking ![[...]] / ![](...) in code examples for real attachment references
-		const { masked } = maskCodeRegions(markdown);
-		const refs: AttachmentRef[] = [];
-		const seen = new Set<string>();
-		if (masked.match(/\.drawio(?:\.|$)/i)) {
-			// Draw.io files are rendered via the dedicated diagram pipeline; do not upload them as ordinary attachments.
-		}
+return refs;
+}
 
-		// Obsidian embed:![[file.png|alt]] / ![[folder/file.png]]
-		// `\\?\|` handles escaped pipes inside markdown tables (`\|`); otherwise the backslash gets swallowed into the linkpath
-		const embedRe = /!\[\[([^\]\n|\\]+)(?:\\?\|([^\]\n]*))?\]\]/g;
-		let m: RegExpExecArray | null;
-		while ((m = embedRe.exec(masked)) !== null) {
-			const linkpath = m[1]!.trim();
-			// Note/heading/block embeds (![[note#section]] / ![[note#^id]]) are not attachments; skip them
-			if (linkpath.includes('#')) continue;
-			const alt = (m[2] ?? '').trim();
-			const tfile = resolveAttachmentFile(this.app, linkpath, sourcePath);
-			const filename = tfile?.name ?? linkpath.split('/').pop() ?? linkpath;
-			if (/\.drawio(?:\.|$)/i.test(filename)) continue;
-			const key = `embed:${filename}`;
-			if (seen.has(key)) continue;
-			seen.add(key);
-			refs.push({ rawMatch: m[0], linkpath, alt, tfile, filename });
-		}
-
-		// Standard markdown image: ![alt](path "title")
-		// Only relative paths or URLs without a scheme are treated as local attachments
-		const imgRe = /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
-		while ((m = imgRe.exec(masked)) !== null) {
-			const alt = m[1] ?? '';
-			const path = m[2]!;
-			if (/^[a-z][a-z0-9+\-.]*:\/\//i.test(path) || path.startsWith('data:')) continue;
-			if (path.includes('#')) continue;
-			const decoded = tryDecode(path);
-			const tfile = resolveAttachmentFile(this.app, decoded, sourcePath);
-			const filename = tfile?.name ?? decoded.split('/').pop() ?? decoded;
-			if (/\.drawio(?:\.|$)/i.test(filename)) continue;
-			const key = `img:${filename}`;
-			if (seen.has(key)) continue;
-			seen.add(key);
-			refs.push({ rawMatch: m[0], linkpath: decoded, alt, tfile, filename });
-		}
-
-		return refs;
+async function collectDrawio(app: App, markdown: string, sourcePath: string): Promise<DiagramBlock[]> {
+	const blocks = extractFenceBlocks(markdown).filter((b) => b.lang === 'drawio' || b.lang === 'draw.io');
+	const seen = new Set<string>();
+	const out: DiagramBlock[] = [];
+	for (const b of blocks) {
+		const hash = await sha1Hex(b.content);
+		if (seen.has(hash)) continue;
+		seen.add(hash);
+		out.push({ hash, source: b.content, filename: `drawio-${hash}.svg` });
 	}
 
-	private async collectDrawio(markdown: string, sourcePath: string): Promise<DiagramBlock[]> {
-		const blocks = extractFenceBlocks(markdown).filter((b) => b.lang === 'drawio' || b.lang === 'draw.io');
-		const seen = new Set<string>();
-		const out: DiagramBlock[] = [];
-		for (const b of blocks) {
-			const hash = await sha1Hex(b.content);
-			if (seen.has(hash)) continue;
-			seen.add(hash);
-			out.push({ hash, source: b.content, filename: `drawio-${hash}.svg` });
-		}
-
-		const { masked } = maskCodeRegions(markdown);
-		const refs = new Set<string>();
-		const embedRe = /!\[\[([^\]\n|\\]+)(?:\\?\|([^\]\n]*))?\]\]/g;
-		let m: RegExpExecArray | null;
-		while ((m = embedRe.exec(masked)) !== null) {
-			const raw = m[1]!;
-			const decoded = tryDecode(raw);
-			if (!/\.drawio(?:\.|$)/i.test(decoded)) continue;
-			const tfile = resolveAttachmentFile(this.app, decoded, sourcePath);
-			if (!tfile) continue;
-			const content = await this.app.vault.read(tfile);
-			const hash = await sha1Hex(content);
-			if (refs.has(hash)) continue;
-			refs.add(hash);
-			out.push({ hash, source: content, filename: `drawio-${hash}.svg`, sourcePath: tfile.path });
-		}
-		const markdownImageRe = /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
-		while ((m = markdownImageRe.exec(masked)) !== null) {
-			const raw = m[2]!;
-			const decoded = tryDecode(raw);
-			if (!/\.drawio(?:\.|$)/i.test(decoded)) continue;
-			const tfile = resolveAttachmentFile(this.app, decoded, sourcePath);
-			if (!tfile) continue;
-			const content = await this.app.vault.read(tfile);
-			const hash = await sha1Hex(content);
-			if (refs.has(hash)) continue;
-			refs.add(hash);
-			out.push({ hash, source: content, filename: `drawio-${hash}.svg`, sourcePath: tfile.path });
-		}
-
-		return out;
+	const { masked } = maskCodeRegions(markdown);
+	const refs = new Set<string>();
+	const embedRe = /!\[\[([^\]\n|\\]+)(?:\\?\|([^\]\n]*))?\]\]/g;
+	let m: RegExpExecArray | null;
+	while ((m = embedRe.exec(masked)) !== null) {
+		const raw = m[1]!;
+		const decoded = tryDecode(raw);
+		if (!/\.drawio(?:\.|$)/i.test(decoded)) continue;
+		const tfile = resolveAttachmentFile(app, decoded, sourcePath);
+		if (!tfile) continue;
+		const content = await app.vault.read(tfile);
+		const hash = await sha1Hex(content);
+		if (refs.has(hash)) continue;
+		refs.add(hash);
+		out.push({ hash, source: content, filename: `drawio-${hash}.svg`, sourcePath: tfile.path });
+	}
+	const markdownImageRe = /!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+	while ((m = markdownImageRe.exec(masked)) !== null) {
+		const raw = m[2]!;
+		const decoded = tryDecode(raw);
+		if (!/\.drawio(?:\.|$)/i.test(decoded)) continue;
+		const tfile = resolveAttachmentFile(app, decoded, sourcePath);
+		if (!tfile) continue;
+		const content = await app.vault.read(tfile);
+		const hash = await sha1Hex(content);
+		if (refs.has(hash)) continue;
+		refs.add(hash);
+		out.push({ hash, source: content, filename: `drawio-${hash}.svg`, sourcePath: tfile.path });
 	}
 
-	private async collectDiagrams(
-		markdown: string,
-		lang: 'mermaid',
-	): Promise<DiagramBlock[]> {
-		const blocks = extractFenceBlocks(markdown).filter((b) => b.lang === lang);
-		const seen = new Set<string>();
-		const out: DiagramBlock[] = [];
-		for (const b of blocks) {
-			const norm = b.content.replace(/\r/g, '').replace(/\n+$/, '');
-			const hash = await sha1Hex(norm);
-			if (seen.has(hash)) continue;
-			seen.add(hash);
-			out.push({ hash, source: norm, filename: `${lang}-${hash}.svg` });
+	return out;
+}
+
+async function collectDiagrams(
+	markdown: string,
+	lang: 'mermaid',
+): Promise<DiagramBlock[]> {
+	const blocks = extractFenceBlocks(markdown).filter((b) => b.lang === lang);
+	const seen = new Set<string>();
+	const out: DiagramBlock[] = [];
+	for (const b of blocks) {
+		const norm = b.content.replace(/\r/g, '').replace(/\n+$/, '');
+		const hash = await sha1Hex(norm);
+		if (seen.has(hash)) continue;
+		seen.add(hash);
+		out.push({ hash, source: norm, filename: `${lang}-${hash}.svg` });
+	}
+	return out;
+}
+
+async function buildFenceHashMap(markdown: string): Promise<Map<string, string>> {
+	// key: "lang|content" → hash
+	const map = new Map<string, string>();
+	const blocks = extractFenceBlocks(markdown);
+	for (const b of blocks) {
+		if (b.lang !== 'mermaid' && b.lang !== 'drawio' && b.lang !== 'draw.io') continue;
+		const norm = b.content.replace(/\r/g, '').replace(/\n+$/, '');
+		const key = `${b.lang}|${norm}`;
+		if (map.has(key)) continue;
+		map.set(key, await sha1Hex(norm));
+	}
+	return map;
+}
+
+function buildRenderer(ctx: ConvertContext, fenceHashes: Map<string, string>): MarkdownIt {
+	// xhtmlOut: true — Confluence storage uses strict XHTML, so void elements must be self-closed (<hr /> rather than <hr>)
+	const md = new MarkdownIt({ html: false, xhtmlOut: true, breaks: false, linkify: true });
+
+	// fence: code blocks + diagrams
+	md.renderer.rules.fence = (tokens, idx) => {
+		const token = tokens[idx]!;
+		// `token.info` may be a whole string like `mermaid id=foo` with attributes,
+		// so to match extractFenceBlocks / markdown-it conventions, only the first token is used as the lang.
+		const lang = (token.info || '').trim().split(/\s+/)[0]!.toLowerCase();
+		// markdown-it fence token content may end with a trailing newline; extractFenceBlocks strips it,
+		// but some editors preserve a final blank line before the closing fence. Normalize both forms so
+		// the hash lookup remains stable and the rendered attachment matches the uploaded file.
+		const content = token.content.replace(/\n+$/, '').replace(/\r/g, '');
+
+		if (lang === 'mermaid' && ctx.renderMermaidToSvg) {
+			const hash = fenceHashes.get(`mermaid|${content}`);
+			const filename = hash ? ctx.mermaidFilenameByHash.get(hash) : undefined;
+			if (filename) return renderAcImage(filename, '');
 		}
-		return out;
-	}
-
-	private async buildFenceHashMap(markdown: string): Promise<Map<string, string>> {
-		// key: "lang|content" → hash
-		const map = new Map<string, string>();
-		const blocks = extractFenceBlocks(markdown);
-		for (const b of blocks) {
-			if (b.lang !== 'mermaid' && b.lang !== 'drawio' && b.lang !== 'draw.io') continue;
-			const norm = b.content.replace(/\r/g, '').replace(/\n+$/, '');
-			const key = `${b.lang}|${norm}`;
-			if (map.has(key)) continue;
-			map.set(key, await sha1Hex(norm));
+		if ((lang === 'drawio' || lang === 'draw.io') && ctx.renderDrawioToSvg) {
+			const lookupLang = lang === 'draw.io' ? 'draw.io' : 'drawio';
+			const hash = fenceHashes.get(`${lookupLang}|${content}`);
+			const filename = hash ? ctx.drawioFilenameByHash.get(hash) : undefined;
+			if (filename) return renderAcImage(filename, '');
 		}
-		return map;
-	}
+		return renderAcCode(lang, content);
+	};
 
-	private buildRenderer(ctx: ConvertContext, fenceHashes: Map<string, string>): MarkdownIt {
-		// xhtmlOut: true — Confluence storage uses strict XHTML, so void elements must be self-closed (<hr /> rather than <hr>)
-		const md = new MarkdownIt({ html: false, xhtmlOut: true, breaks: false, linkify: true });
+	md.renderer.rules.code_block = (tokens, idx) => {
+		return renderAcCode('', tokens[idx]!.content);
+	};
 
-		// fence: code blocks + diagrams
-		md.renderer.rules.fence = (tokens, idx) => {
-			const token = tokens[idx]!;
-			// `token.info` may be a whole string like `mermaid id=foo` with attributes,
-			// so to match extractFenceBlocks / markdown-it conventions, only the first token is used as the lang.
-			const lang = (token.info || '').trim().split(/\s+/)[0]!.toLowerCase();
-			// markdown-it fence token content may end with a trailing newline; extractFenceBlocks strips it,
-			// but some editors preserve a final blank line before the closing fence. Normalize both forms so
-			// the hash lookup remains stable and the rendered attachment matches the uploaded file.
-			const content = token.content.replace(/\n+$/, '').replace(/\r/g, '');
+	// image: replace with ac:image (for existing attachments) or keep the original external src
+	md.renderer.rules.image = (tokens, idx) => {
+		const token = tokens[idx]!;
+		const src = token.attrGet('src') ?? '';
+		const alt = token.content || '';
+		if (/^[a-z][a-z0-9+\-.]*:\/\//i.test(src) || src.startsWith('data:')) {
+			return `<img src="${escapeAttr(src)}" alt="${escapeAttr(alt)}" />`;
+		}
+		const decoded = tryDecode(src);
+		const filename = decoded.split('/').pop() ?? decoded;
+		if (/\.drawio(?:\.|$)/i.test(filename) && ctx.renderDrawioToSvg) {
+			const maybe = ctx.drawioFilenameByPath.get(decoded) ?? ctx.drawioFilenameByPath.get(filename) ?? undefined;
+			if (maybe) return renderAcImage(maybe, alt);
+		}
+		if (ctx.attachedFilenames.has(filename)) {
+			return renderAcImage(filename, alt, ctx.defaultImageWidthPx);
+		}
+		return `<!-- Attachment not uploaded: ${escapeAttr(filename)} -->`;
+	};
 
-			if (lang === 'mermaid' && ctx.renderMermaidToSvg) {
-				const hash = fenceHashes.get(`mermaid|${content}`);
-				const filename = hash ? ctx.mermaidFilenameByHash.get(hash) : undefined;
-				if (filename) return renderAcImage(filename, '');
-			}
-			if ((lang === 'drawio' || lang === 'draw.io') && ctx.renderDrawioToSvg) {
-				const lookupLang = lang === 'draw.io' ? 'draw.io' : 'drawio';
-				const hash = fenceHashes.get(`${lookupLang}|${content}`);
-				const filename = hash ? ctx.drawioFilenameByHash.get(hash) : undefined;
-				if (filename) return renderAcImage(filename, '');
-			}
-			return renderAcCode(lang, content);
-		};
+	// callout: implemented by wrapping blockquotes with a custom renderer
+	const originalBlockquoteOpen = md.renderer.rules.blockquote_open;
+	const originalBlockquoteClose = md.renderer.rules.blockquote_close;
+	md.renderer.rules.blockquote_open = (tokens, idx, options, env, self) => {
+		const calloutType = detectCalloutType(tokens, idx);
+		if (calloutType) {
+			(env as CalloutEnv).__calloutOpen = true;
+			return `<ac:structured-macro ac:name="${calloutType.macro}"><ac:rich-text-body>`;
+		}
+		return originalBlockquoteOpen
+			? originalBlockquoteOpen(tokens, idx, options, env, self)
+			: self.renderToken(tokens, idx, options);
+	};
+	md.renderer.rules.blockquote_close = (tokens, idx, options, env, self) => {
+		const e = env as CalloutEnv;
+		if (e.__calloutOpen) {
+			e.__calloutOpen = false;
+			return `</ac:rich-text-body></ac:structured-macro>`;
+		}
+		return originalBlockquoteClose
+			? originalBlockquoteClose(tokens, idx, options, env, self)
+			: self.renderToken(tokens, idx, options);
+	};
 
-		md.renderer.rules.code_block = (tokens, idx) => {
-			return renderAcCode('', tokens[idx]!.content);
-		};
+	// inline html (html:false is disabled by default; this is a safety fallback)
+	md.renderer.rules.html_block = () => '';
+	md.renderer.rules.html_inline = () => '';
 
-		// image: replace with ac:image (for existing attachments) or keep the original external src
-		md.renderer.rules.image = (tokens, idx) => {
-			const token = tokens[idx]!;
-			const src = token.attrGet('src') ?? '';
-			const alt = token.content || '';
-			if (/^[a-z][a-z0-9+\-.]*:\/\//i.test(src) || src.startsWith('data:')) {
-				return `<img src="${escapeAttr(src)}" alt="${escapeAttr(alt)}" />`;
-			}
-			const decoded = tryDecode(src);
-			const filename = decoded.split('/').pop() ?? decoded;
-			if (/\.drawio(?:\.|$)/i.test(filename) && ctx.renderDrawioToSvg) {
-				const maybe = ctx.drawioFilenameByPath.get(decoded) ?? ctx.drawioFilenameByPath.get(filename) ?? undefined;
-				if (maybe) return renderAcImage(maybe, alt);
-			}
-			if (ctx.attachedFilenames.has(filename)) {
-				return renderAcImage(filename, alt, ctx.defaultImageWidthPx);
-			}
-			return `<!-- Attachment not uploaded: ${escapeAttr(filename)} -->`;
-		};
-
-		// callout: implemented by wrapping blockquotes with a custom renderer
-		const originalBlockquoteOpen = md.renderer.rules.blockquote_open;
-		const originalBlockquoteClose = md.renderer.rules.blockquote_close;
-		md.renderer.rules.blockquote_open = (tokens, idx, options, env, self) => {
-			const calloutType = detectCalloutType(tokens, idx);
-			if (calloutType) {
-				(env as CalloutEnv).__calloutOpen = true;
-				return `<ac:structured-macro ac:name="${calloutType.macro}"><ac:rich-text-body>`;
-			}
-			return originalBlockquoteOpen
-				? originalBlockquoteOpen(tokens, idx, options, env, self)
-				: self.renderToken(tokens, idx, options);
-		};
-		md.renderer.rules.blockquote_close = (tokens, idx, options, env, self) => {
-			const e = env as CalloutEnv;
-			if (e.__calloutOpen) {
-				e.__calloutOpen = false;
-				return `</ac:rich-text-body></ac:structured-macro>`;
-			}
-			return originalBlockquoteClose
-				? originalBlockquoteClose(tokens, idx, options, env, self)
-				: self.renderToken(tokens, idx, options);
-		};
-
-		// inline html (html:false is disabled by default; this is a safety fallback)
-		md.renderer.rules.html_block = () => '';
-		md.renderer.rules.html_inline = () => '';
-
-		return md;
-	}
+	return md;
 }
 
 // ============ Helper: text processing ============

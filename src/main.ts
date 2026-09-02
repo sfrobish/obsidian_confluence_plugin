@@ -14,7 +14,7 @@ import {
 	PublishConfluenceSettingTab,
 } from './settings';
 import { ConfluenceApi } from './confluence/api';
-import { MarkdownConverter } from './confluence/markdownConverter';
+import { extractReferences, convert as convertMarkdown } from './confluence/markdownConverter';
 import { PublishEngine } from './publish/publishEngine';
 import { scanBoundNotes } from './publish/noteScanner';
 import { InstanceResolver } from './publish/instanceResolver';
@@ -778,9 +778,8 @@ export default class PublishConfluencePlugin extends Plugin {
 	 */
 	async exportStoragePreview(file: TFile): Promise<void> {
 		try {
-			const converter = new MarkdownConverter(this.app);
 			const markdown = await this.app.vault.cachedRead(file);
-			const refs = await converter.extractReferences(markdown, file.path);
+			const refs = await extractReferences(this.app, markdown, file.path);
 			// `stripSupplementaryChars` is per-instance. For the preview we pick
 			// the instance whose baseUrl matches the note's confluence_url —
 			// that's the one that would actually consume the output. Fall back
@@ -792,7 +791,7 @@ export default class PublishConfluencePlugin extends Plugin {
 			const matchedInst = this.settings.instances.length > 0
 				? (resolver.resolve(fallbackUrl) ?? this.settings.instances[0]!)
 				: null;
-			const xhtml = await converter.convert(markdown, file.path, {
+			const xhtml = await convertMarkdown(this.app, markdown, file.path, {
 				attachedFilenames: new Set(refs.attachments.map((r) => r.filename)),
 				mermaidFilenameByHash: new Map(refs.mermaid.map((b) => [b.hash, b.filename])),
 				drawioFilenameByHash: new Map(refs.drawio.map((b) => [b.hash, b.filename])),

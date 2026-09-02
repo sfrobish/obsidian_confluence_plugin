@@ -1,14 +1,14 @@
 import { describe, expect, it } from 'bun:test';
 import { collectAncestorIndexPaths, shouldReplaceRemotePageOnConflict } from '../src/publish/structureConflict';
-import { MarkdownConverter } from '../src/confluence/markdownConverter';
+import { extractReferences, convert } from '../src/confluence/markdownConverter';
 
 (globalThis as any).window ??= { crypto: { subtle: crypto.subtle } };
 
 describe('markdown Mermaid fence conversion', () => {
 	it('replaces a fenced Mermaid block even when there is a blank line before the closing fence', async () => {
-		const converter = new MarkdownConverter({} as any);
+		const app = {} as any;
 		const md = '```mermaid\nflowchart TD\nA-->B\n\n```\n';
-		const refs = await converter.extractReferences(md, 'x.md');
+		const refs = await extractReferences(app, md, 'x.md');
 		const ctx = {
 			attachedFilenames: new Set<string>(),
 			mermaidFilenameByHash: new Map(refs.mermaid.map((b) => [b.hash, b.filename])),
@@ -19,7 +19,7 @@ describe('markdown Mermaid fence conversion', () => {
 			defaultImageWidthPx: 0,
 			stripSupplementaryChars: false,
 		};
-		const out = await converter.convert(md, 'x.md', ctx);
+		const out = await convert(app, md, 'x.md', ctx);
 		expect(out).toContain('<ac:image>');
 		expect(out).not.toContain('ac:name="code"');
 	});

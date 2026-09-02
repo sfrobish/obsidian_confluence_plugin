@@ -2,7 +2,9 @@ import { type App, TFile, TFile as TFileCtor } from 'obsidian';
 import { ConfluenceApi, ConfluenceApiError } from '../confluence/api';
 import { parsePageIdFromUrl } from '../confluence/urlParser';
 import {
-	MarkdownConverter,
+	computeContentHash,
+	extractReferences,
+	convert as convertMarkdown,
 	ConvertContext,
 	ExtractedReferences,
 	DiagramBlock,
@@ -85,7 +87,6 @@ class TargetPublishFailure extends Error {
  * Reentrancy guard: isBusy flag. PublishAll and PublishOne share the same lock to avoid timer and manual-trigger overlap.
  */
 export class PublishEngine {
-	private converter: MarkdownConverter;
 	private uploader: AttachmentUploader;
 	private mermaidEnabled = false;
 	private drawioEnabled = false;
@@ -94,7 +95,6 @@ export class PublishEngine {
 
 	constructor(private deps: PublishEngineDeps) {
 		this.instanceResolver = new InstanceResolver({ instances: deps.instances });
-		this.converter = new MarkdownConverter(deps.app);
 		this.uploader = new AttachmentUploader(deps.app, deps.api, deps.logger, {
 			maxSizeBytes: Math.max(1, deps.settings.maxAttachmentSizeMB) * 1024 * 1024,
 		});
@@ -192,13 +192,13 @@ export class PublishEngine {
 			const markdown = await this.deps.app.vault.cachedRead(file);
 			const resolveWikilink = this.makeWikilinkResolver();
 			const resolveMention = this.makeMentionResolver();
-			const contentHash = await this.converter.computeContentHash(markdown, path, {
+			const contentHash = await computeContentHash(this.deps.app, markdown, path, {
 				resolveWikilink,
 				resolveMention,
 				stripSupplementaryChars: this.deps.instance.stripSupplementaryChars,
 				defaultImageWidthPx: this.deps.settings.defaultImageWidthPx,
 			});
-			const refs = await this.converter.extractReferences(markdown, path);
+			const refs = await extractReferences(this.deps.app, markdown, path);
 			const mermaidRendered = await this.renderMermaidOnce(refs);
 			const drawioRendered = await this.renderDrawioOnce(refs);
 			const mermaidFilenameByHash = new Map<string, string>();
@@ -229,7 +229,7 @@ export class PublishEngine {
 				resolveWikilink,
 				resolveMention,
 			};
-			const storageXhtml = await this.converter.convert(markdown, path, ctx);
+			const storageXhtml = await convertMarkdown(this.deps.app, markdown, path, ctx);
 
 			// Multi-instance: partition index-aligned targets for this engine.
 			// Foreign targets do not count as failures; partially unmatched targets
