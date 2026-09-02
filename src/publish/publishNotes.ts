@@ -737,13 +737,13 @@ async function isSacredRootPage(deps: PublishContext, file: TFile, pageId: strin
 }
 
 async function renderMermaidOnce(deps: PublishContext, refs: ExtractedReferences): Promise<RenderedDiagram[]> {
-	if (!this.mermaidEnabled || refs.mermaid.length === 0) return [];
+	if (!deps.settings.renderMermaidToSvg || refs.mermaid.length === 0) return [];
 	const rendered = await renderAllMermaid(refs.mermaid, deps.app, deps.logger);
 	return rendered.filter((r): r is RenderedDiagram => r !== null);
 }
 
 async function renderDrawioOnce(deps: PublishContext, refs: ExtractedReferences): Promise<RenderedDiagram[]> {
-	if (!this.drawioEnabled || refs.drawio.length === 0) return [];
+	if (!deps.settings.renderDrawioToSvg || refs.drawio.length === 0) return [];
 	const rendered = await renderAllDrawio(refs.drawio, deps.logger);
 	return rendered.flatMap((r) => r ? [{ block: r.block, png: r.svg }] : []);
 }
