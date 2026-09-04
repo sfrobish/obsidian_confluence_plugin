@@ -6,7 +6,6 @@ import {
 	Plugin,
 	TFile,
 	TFolder,
-	normalizePath,
 } from 'obsidian';
 import {
 	DEFAULT_SETTINGS,
@@ -22,7 +21,7 @@ import { Logger } from './utils/logger';
 import { StatusBarManager } from './ui/statusBar';
 import { PropertyActionsManager } from './ui/propertyActions';
 import { CreateBoundNoteModal } from './ui/createBoundNoteModal';
-import { frontmatterHasBinding, insertTemplateFrontmatter, type Frontmatter } from './frontmatter/handler';
+import { frontmatterHasBinding, insertBindingFrontmatter, type Frontmatter } from './frontmatter/handler';
 import { extractFirstTargetUrl } from './confluence/urlMatch';
 import { LEGACY_MIGRATION_VERSION, migrateLegacySettings, migrateLegacyFrontmatter, migrateLegacyUsernames } from './migration';
 import {
@@ -33,9 +32,7 @@ import {
 } from './types';
 import { t } from './i18n';
 
-const TEMPLATE_FILENAME = 'confluence-note.md';
-
-function buildTemplateContent(): string {
+function buildNoteContent(): string {
 	return `---
 confluence_url:
 confluence_parent_url:
@@ -44,13 +41,13 @@ confluence_last_published:
 confluence_last_hash:
 ---
 
-${t('template.title')}
+${t('newNote.title')}
 
-${t('template.usage')}
+${t('newNote.usage')}
 
-${t('template.bodyHeading')}
+${t('newNote.bodyHeading')}
 
-${t('template.bodyPlaceholder')}
+${t('newNote.bodyPlaceholder')}
 `;
 }
 
@@ -97,10 +94,6 @@ export default class PublishConfluencePlugin extends Plugin {
 		this.propertyActions.start();
 
 		this.restartPublishInterval();
-
-		if (this.settings.autoInstallTemplate) {
-			await this.installTemplateFile(false);
-		}
 
 		if (this.settings.publishOnStartup) {
 			this.startupTimeoutToken = window.setTimeout(() => {
@@ -569,36 +562,6 @@ export default class PublishConfluencePlugin extends Plugin {
 		}
 	}
 
-	// =========== Template ===========
-
-	/** Write confluence-note.md to the template directory. force=true overwrites it. */
-	async installTemplateFile(force: boolean): Promise<boolean> {
-		try {
-			const folder = normalizePath(this.settings.templateFolderPath || 'templates');
-			await this.ensureFolder(folder);
-			const fullPath = folder + '/' + TEMPLATE_FILENAME;
-			const existing = this.app.vault.getAbstractFileByPath(fullPath);
-			const content = buildTemplateContent();
-			if (existing instanceof TFile) {
-				if (!force) return true;
-				await this.app.vault.modify(existing, content);
-			} else {
-				try {
-					await this.app.vault.create(fullPath, content);
-				} catch (e) {
-					const msg = e instanceof Error ? e.message : String(e);
-					if (/already exists/i.test(msg)) return true;
-					throw e;
-				}
-			}
-			this.logger.info(`Template written: ${fullPath}`);
-			return true;
-		} catch (e) {
-			this.logger.error('Failed to write template', e instanceof Error ? e.message : String(e));
-			return false;
-		}
-	}
-
 	private async ensureFolder(path: string): Promise<void> {
 		if (!path) return;
 		const existing = this.app.vault.getAbstractFileByPath(path);
@@ -641,11 +604,11 @@ export default class PublishConfluencePlugin extends Plugin {
 			},
 		});
 		this.addCommand({
-			id: 'insert-template',
-			name: t('command.insertTemplate'),
+			id: 'insert-frontmatter',
+			name: t('command.insertFrontmatter'),
 			editorCallback: async (_editor: Editor, view: MarkdownView) => {
 				if (!view.file) { new Notice(t('notice.noteNotOpen')); return; }
-				const ok = await insertTemplateFrontmatter(this.app, view.file, '', this.settings.frontmatterKey);
+				const ok = await insertBindingFrontmatter(this.app, view.file, '', this.settings.frontmatterKey);
 				new Notice(ok ? t('notice.frontmatterInsertedShort') : t('notice.frontmatterAlreadyExists'));
 			},
 		});
@@ -659,8 +622,8 @@ export default class PublishConfluencePlugin extends Plugin {
 					this.settings.instances,
 					async (path, url) => {
 						await this.ensureFolder(parentOf(path));
-						const file = await this.app.vault.create(path, buildTemplateContent());
-						await insertTemplateFrontmatter(this.app, file, url, this.settings.frontmatterKey);
+						const file = await this.app.vault.create(path, buildNoteContent());
+						await insertBindingFrontmatter(this.app, file, url, this.settings.frontmatterKey);
 						await this.app.workspace.openLinkText(file.path, '', false);
 						return file;
 					},
@@ -728,7 +691,7 @@ export default class PublishConfluencePlugin extends Plugin {
 					.setTitle(t('menu.insertFrontmatter'))
 					.setIcon('cloud')
 					.onClick(async () => {
-							const ok = await insertTemplateFrontmatter(this.app, file, '', this.settings.frontmatterKey);
+							const ok = await insertBindingFrontmatter(this.app, file, '', this.settings.frontmatterKey);
 						new Notice(ok ? t('notice.frontmatterInserted') : t('notice.frontmatterAlreadyExists'));
 					}));
 			}
@@ -756,7 +719,7 @@ export default class PublishConfluencePlugin extends Plugin {
 					.setTitle(t('menu.insertFrontmatter'))
 					.setIcon('cloud')
 					.onClick(async () => {
-							const ok = await insertTemplateFrontmatter(this.app, file, '', this.settings.frontmatterKey);
+							const ok = await insertBindingFrontmatter(this.app, file, '', this.settings.frontmatterKey);
 						new Notice(ok ? t('notice.frontmatterInsertedFileMenu') : t('notice.frontmatterAlreadyExists'));
 					}));
 			}

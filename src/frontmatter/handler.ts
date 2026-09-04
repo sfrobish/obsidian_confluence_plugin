@@ -112,8 +112,8 @@ export async function writeBinding(app: App, file: TFile, patch: BindingPatch, u
 	});
 }
 
-/** Insert the template frontmatter fields for the current file only when no binding exists; returns whether it was inserted. */
-export async function insertTemplateFrontmatter(
+/** Insert the binding frontmatter fields for the current file only when no binding exists; returns whether it was inserted. */
+export async function insertBindingFrontmatter(
 	app: App,
 	file: TFile,
 	placeholderUrl = '',

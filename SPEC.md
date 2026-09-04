@@ -123,7 +123,7 @@ The main plugin class in [src/main.ts](src/main.ts):
 - manages Confluence engine instances
 - runs publish commands
 - maintains status UI and menu integrations
-- handles migration and template installation
+- handles migration
 
 ### 6.2 Settings
 The settings model in [src/settings.ts](src/settings.ts) contains:

@@ -27,8 +27,6 @@ export const en = {
 		frontmatterInsertedFileMenu: 'Frontmatter inserted; open the note and set confluence_url to the target page URL',
 		authOk: 'Authentication ok: {name}',
 		authFail: 'Authentication failed: {error}',
-		templateWritten: 'Template written',
-		templateWriteFailed: 'Failed to write template, see console',
 		exportPreviewOk: 'Storage preview exported: {path}',
 		exportPreviewFailed: 'Failed to export preview: {error}',
 		unmatchedUrl: 'No matching Confluence instance found for URL: {url}',
@@ -51,7 +49,7 @@ export const en = {
 	command: {
 		publishAll: 'Publish all notes',
 		publishCurrent: 'Publish current note',
-		insertTemplate: 'Insert Confluence frontmatter into current note',
+		insertFrontmatter: 'Insert Confluence frontmatter into current note',
 		createBoundNote: 'Create bound note',
 		exportStoragePreview: 'Export storage preview of current note',
 		validateAuth: 'Validate credentials',
@@ -93,7 +91,6 @@ export const en = {
 			auth: 'Confluence authentication',
 			schedule: 'Publish schedule',
 			scope: 'Scan scope',
-			template: 'Note template',
 			attachments: 'Attachments',
 			diagrams: 'Diagram rendering (Mermaid / Draw.io)',
 			ui: 'Notifications and status bar',
@@ -172,15 +169,6 @@ export const en = {
 			name: 'Ignore patterns',
 			desc: 'One glob per line. Matching notes are skipped.',
 		},
-		templateFolder: {
-			name: 'Template folder',
-			desc: 'Where the template file is stored (relative to vault root)',
-		},
-		autoInstallTemplate: {
-			name: 'Auto-install template',
-			desc: 'On load, write confluence-note.md into the template folder if missing',
-		},
-		writeTemplateNow: 'Write template now',
 		uploadAttachments: {
 			name: 'Upload local attachments',
 			desc: 'When enabled, ![[image.png]] embeds in notes are uploaded as Confluence attachments',
@@ -233,8 +221,8 @@ export const en = {
 		},
 	},
 
-	// ===== Note template body (written into <vault>/templates/confluence-note.md) =====
-		template: {
+	// ===== Body written into a newly created bound note =====
+		newNote: {
 			title: '# Title',
 			usage:
 				'> Pick one of two flows:\n> 1. Existing Confluence page → put the page URL in `confluence_url`\n> 2. No page yet → put the **parent** page URL in `confluence_parent_url` (supports array for multi-parent publish). On first publish, the plugin will create a child page named after this note, then write the new URL back to `confluence_url`.\n> The other fields (page_id / last_published / last_hash) are maintained automatically.',

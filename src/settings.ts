@@ -20,10 +20,6 @@ export interface PublishConfluenceSettings {
 	/** List of glob patterns; matching files are skipped */
 	ignorePatterns: string[];
 
-	// ========== Templates ==========
-	templateFolderPath: string;
-	autoInstallTemplate: boolean;
-
 	// ========== Behavior ==========
 	showStatusBar: boolean;
 	showNotice: boolean;
@@ -49,10 +45,7 @@ export const DEFAULT_SETTINGS: PublishConfluenceSettings = {
 	scanFolders: [],
 	// Note: the Obsidian config directory (default .obsidian, user-customizable) is implicitly ignored by scanBoundNotes,
 	// so we only list the common extra ignore items users typically need.
-	ignorePatterns: ['.trash/**', 'templates/**'],
-
-	templateFolderPath: 'templates',
-	autoInstallTemplate: true,
+	ignorePatterns: ['.trash/**'],
 
 	showStatusBar: true,
 	showNotice: true,
@@ -162,34 +155,6 @@ export class PublishConfluenceSettingTab extends PluginSettingTab {
 						void this.plugin.saveSettings();
 					});
 				});
-		});
-
-		// ===== Templates =====
-		this.renderSection(containerEl, t('settings.section.template'), (el) => {
-			new Setting(el)
-				.setName(t('settings.templateFolder.name'))
-				.setDesc(t('settings.templateFolder.desc'))
-				.addText((tx) => tx
-					.setPlaceholder('templates')
-					.setValue(s.templateFolderPath)
-					.onChange(async (v) => {
-						s.templateFolderPath = v.trim() || 'templates';
-						await this.plugin.saveSettings();
-					}));
-
-			new Setting(el)
-				.setName(t('settings.autoInstallTemplate.name'))
-				.setDesc(t('settings.autoInstallTemplate.desc'))
-				.addToggle((tx) => tx.setValue(s.autoInstallTemplate).onChange(async (v) => {
-					s.autoInstallTemplate = v;
-					await this.plugin.saveSettings();
-				}));
-
-			new Setting(el)
-				.addButton((btn) => btn.setButtonText(t('settings.writeTemplateNow')).onClick(async () => {
-					const ok = await this.plugin.installTemplateFile(true);
-					new Notice(ok ? t('notice.templateWritten') : t('notice.templateWriteFailed'));
-				}));
 		});
 
 		// ===== Attachments =====

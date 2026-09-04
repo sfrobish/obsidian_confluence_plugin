@@ -8,7 +8,7 @@ export interface CreateBoundNoteResult {
 	file: TFile;
 }
 
-/** Modal: input a note path + Confluence URL → create the note and write template frontmatter. */
+/** Modal: input a note path + Confluence URL → create the note and write binding frontmatter. */
 export class CreateBoundNoteModal extends Modal {
 	private notePath: string;
 	private url: string = '';
