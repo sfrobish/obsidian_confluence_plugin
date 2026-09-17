@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="embed.diagrams.net">
+  <diagram id="0" name="L1 Capabilities">
+    <mxGraphModel dx="2399" dy="1029" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="3FV40i-oF4Br4QjS-09w-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;dashed=1;fontColor=#333333;strokeColor=#666666;verticalAlign=top;" value="FOUNDATIONAL CAPABILITIES" vertex="1">
+          <mxGeometry height="130" width="510" x="-170" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="DVOLjz2qaOWpnqErDxJU-8" parent="1" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;dashed=1;fontColor=#333333;strokeColor=#666666;verticalAlign=top;" value="CARE DELIVERY OPERATIONS" vertex="1">
+          <mxGeometry height="130" width="850" x="370" y="150" as="geometry" />
+        </mxCell>
+        <mxCell id="DVOLjz2qaOWpnqErDxJU-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="2. Provider Management &amp;amp; Credentialing" vertex="1">
+          <mxGeometry height="70" width="130" x="20" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="DVOLjz2qaOWpnqErDxJU-2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="4. Service Request &amp;amp; Authorization Management" vertex="1">
+          <mxGeometry height="70" width="130" x="390" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="DVOLjz2qaOWpnqErDxJU-3" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="5. Utilization Management &amp;amp; Eligibility" vertex="1">
+          <mxGeometry height="70" width="130" x="560" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="DVOLjz2qaOWpnqErDxJU-4" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="6. Care Coordination &amp;amp; Clinical Intelligence" vertex="1">
+          <mxGeometry height="70" width="130" x="730" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="DVOLjz2qaOWpnqErDxJU-5" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="7. Order Fulfillment &amp;amp; Provider Staffing" vertex="1">
+          <mxGeometry height="70" width="130" x="900" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="DVOLjz2qaOWpnqErDxJU-6" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="8. Revenue Cycle Management" vertex="1">
+          <mxGeometry height="70" width="130" x="1070" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="DVOLjz2qaOWpnqErDxJU-7" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="9. Stakeholder Engagement &amp;amp; Communication" vertex="1">
+          <mxGeometry height="70" width="130" x="1240" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="nQ9_BGga8__Z-t9d9cKC-1" edge="1" parent="1" source="DVOLjz2qaOWpnqErDxJU-2" style="endArrow=classic;html=1;rounded=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="DVOLjz2qaOWpnqErDxJU-3" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="730" y="370" as="sourcePoint" />
+            <mxPoint x="780" y="320" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="nQ9_BGga8__Z-t9d9cKC-2" edge="1" parent="1" source="DVOLjz2qaOWpnqErDxJU-3" style="endArrow=classic;html=1;rounded=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="DVOLjz2qaOWpnqErDxJU-4" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="640" y="330" as="sourcePoint" />
+            <mxPoint x="680" y="330" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="nQ9_BGga8__Z-t9d9cKC-3" edge="1" parent="1" source="DVOLjz2qaOWpnqErDxJU-4" style="endArrow=classic;html=1;rounded=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="DVOLjz2qaOWpnqErDxJU-5" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="780" y="380" as="sourcePoint" />
+            <mxPoint x="820" y="380" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="nQ9_BGga8__Z-t9d9cKC-4" edge="1" parent="1" source="DVOLjz2qaOWpnqErDxJU-5" style="endArrow=classic;html=1;rounded=0;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" target="DVOLjz2qaOWpnqErDxJU-6" value="">
+          <mxGeometry height="50" relative="1" width="50" as="geometry">
+            <mxPoint x="950" y="380" as="sourcePoint" />
+            <mxPoint x="990" y="380" as="targetPoint" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="wYd3_dhxRxiZq4-JzsvJ-1" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="1. Member Identity, Coverage, &amp;amp; Eligibility Management" vertex="1">
+          <mxGeometry height="70" width="130" x="-150" y="180" as="geometry" />
+        </mxCell>
+        <mxCell id="3FV40i-oF4Br4QjS-09w-2" parent="1" style="rounded=1;whiteSpace=wrap;html=1;" value="3. Service &amp;amp; Program Configuration" vertex="1">
+          <mxGeometry height="70" width="130" x="190" y="180" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

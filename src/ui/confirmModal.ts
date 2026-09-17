@@ -14,7 +14,7 @@ export class ConfirmModal extends Modal {
 
 	onOpen(): void {
 		this.titleEl.setText(this.titleText);
-		const msgEl = this.contentEl.createDiv({ cls: 'sync-confluence-confirm-message' });
+		const msgEl = this.contentEl.createDiv({ cls: 'publish-confluence-confirm-message' });
 		msgEl.createEl('pre', { text: this.message });
 		new Setting(this.contentEl)
 			.addButton((btn) => btn.setButtonText(t('modal.confirm.cancel')).onClick(() => {

@@ -1,11 +1,11 @@
 import { LogEntry } from '../types';
 
-const PREFIX = '[Sync Confluence]';
+const PREFIX = '[Publish Confluence]';
 
 export class Logger {
 	private logs: LogEntry[] = [];
 	private readonly maxLogs = 200;
-	private lastSyncTime: Date | null = null;
+	private lastPublishTime: Date | null = null;
 	private listeners = new Set<() => void>();
 
 	addListener(cb: () => void): void {
@@ -58,12 +58,12 @@ export class Logger {
 		this.notify();
 	}
 
-	recordSyncTime(): void {
-		this.lastSyncTime = new Date();
+	recordPublishTime(): void {
+		this.lastPublishTime = new Date();
 	}
 
-	getLastSyncTime(): Date | null {
-		return this.lastSyncTime;
+	getLastPublishTime(): Date | null {
+		return this.lastPublishTime;
 	}
 
 	formatLogs(logs?: LogEntry[]): string {

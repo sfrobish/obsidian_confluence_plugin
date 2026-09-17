@@ -6,62 +6,59 @@ import {
 	Plugin,
 	TFile,
 	TFolder,
-	normalizePath,
 } from 'obsidian';
 import {
 	DEFAULT_SETTINGS,
-	SyncConfluenceSettings,
-	SyncConfluenceSettingTab,
+	PublishConfluenceSettings,
+	PublishConfluenceSettingTab,
 } from './settings';
 import { ConfluenceApi } from './confluence/api';
-import { MarkdownConverter } from './confluence/markdownConverter';
-import { SyncEngine } from './sync/syncEngine';
-import { scanBoundNotes } from './sync/noteScanner';
-import { InstanceResolver } from './sync/instanceResolver';
+import { extractReferences, convert as convertMarkdown } from './confluence/convertMarkdown';
+import { publishFiles, publishOne, type PublishContext } from './publish/publishNotes';
+import { scanBoundNotes } from './publish/noteScanner';
+import { groupByInstance, resolveInstance } from './publish/resolveInstances';
 import { Logger } from './utils/logger';
 import { StatusBarManager } from './ui/statusBar';
 import { PropertyActionsManager } from './ui/propertyActions';
 import { CreateBoundNoteModal } from './ui/createBoundNoteModal';
-import { frontmatterHasBinding, insertTemplateFrontmatter, type Frontmatter } from './frontmatter/handler';
+import { frontmatterHasBinding, insertBindingFrontmatter, type Frontmatter } from './frontmatter/handler';
 import { extractFirstTargetUrl } from './confluence/urlMatch';
 import { LEGACY_MIGRATION_VERSION, migrateLegacySettings, migrateLegacyFrontmatter, migrateLegacyUsernames } from './migration';
 import {
-	SyncStatus,
+	PublishStatus,
 	type ConfluenceInstance,
 	type MultiInstanceBatchResult,
-	type PerInstanceSyncResult,
+	type PerInstancePublishResult,
 } from './types';
 import { t } from './i18n';
 
-const TEMPLATE_FILENAME = 'confluence-note.md';
-
-function buildTemplateContent(): string {
+function buildNoteContent(): string {
 	return `---
 confluence_url:
 confluence_parent_url:
 confluence_page_id:
-confluence_last_synced:
+confluence_last_published:
 confluence_last_hash:
 ---
 
-${t('template.title')}
+${t('newNote.title')}
 
-${t('template.usage')}
+${t('newNote.usage')}
 
-${t('template.bodyHeading')}
+${t('newNote.bodyHeading')}
 
-${t('template.bodyPlaceholder')}
+${t('newNote.bodyPlaceholder')}
 `;
 }
 
-export default class SyncConfluencePlugin extends Plugin {
-	declare settings: SyncConfluenceSettings;
+export default class PublishConfluencePlugin extends Plugin {
+	declare settings: PublishConfluenceSettings;
 	logger!: Logger;
 	statusBar: StatusBarManager | null = null;
 	propertyActions: PropertyActionsManager | null = null;
 
-	private engines: Map<string, SyncEngine> = new Map();
-	private syncIntervalToken: number | null = null;
+	private engines: Map<string, PublishContext> = new Map();
+	private publishIntervalToken: number | null = null;
 	private startupTimeoutToken: number | null = null;
 	/**
 	 * Tracks the last plugin version that ran both `migrateLegacySettings`
@@ -81,10 +78,10 @@ export default class SyncConfluencePlugin extends Plugin {
 		await this.ensureEngines();
 
 		this.addRibbonIcon('cloud-upload', t('plugin.ribbonTooltip'), async () => {
-			await this.syncAll();
+			await this.publishAll();
 		});
 
-		this.addSettingTab(new SyncConfluenceSettingTab(this.app, this));
+		this.addSettingTab(new PublishConfluenceSettingTab(this.app, this));
 		this.registerCommands();
 		this.registerMenuIntegrations();
 
@@ -96,16 +93,12 @@ export default class SyncConfluencePlugin extends Plugin {
 		this.propertyActions = new PropertyActionsManager(this);
 		this.propertyActions.start();
 
-		this.restartSyncInterval();
+		this.restartPublishInterval();
 
-		if (this.settings.autoInstallTemplate) {
-			await this.installTemplateFile(false);
-		}
-
-		if (this.settings.syncOnStartup) {
+		if (this.settings.publishOnStartup) {
 			this.startupTimeoutToken = window.setTimeout(() => {
 				this.startupTimeoutToken = null;
-				void this.syncAll();
+				void this.publishAll();
 			}, 5000);
 		}
 
@@ -113,7 +106,7 @@ export default class SyncConfluencePlugin extends Plugin {
 	}
 
 	onunload() {
-		this.stopSyncInterval();
+		this.stopPublishInterval();
 		if (this.startupTimeoutToken !== null) {
 			window.clearTimeout(this.startupTimeoutToken);
 			this.startupTimeoutToken = null;
@@ -125,8 +118,18 @@ export default class SyncConfluencePlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		const data = (await this.loadData()) as (Partial<SyncConfluenceSettings> & { legacyMigrationVersion?: string }) | null;
-		const { legacyMigrationVersion, ...rest } = data ?? {};
+		const data = (await this.loadData()) as (Partial<PublishConfluenceSettings> & {
+			legacyMigrationVersion?: string;
+			/** Pre-rename field names (plugin used to call this "sync"); read as a fallback below. */
+			syncInterval?: number;
+			syncOnStartup?: boolean;
+			/** Pre-refactor field name (kroki/PNG rendering was removed; Mermaid is always rendered to SVG now). */
+			renderMermaidToPng?: boolean;
+		}) | null;
+		const { legacyMigrationVersion, syncInterval, syncOnStartup, renderMermaidToPng, ...rest } = data ?? {};
+		if (rest.publishInterval === undefined && syncInterval !== undefined) rest.publishInterval = syncInterval;
+		if (rest.publishOnStartup === undefined && syncOnStartup !== undefined) rest.publishOnStartup = syncOnStartup;
+		if (rest.renderMermaidToSvg === undefined && renderMermaidToPng !== undefined) rest.renderMermaidToSvg = renderMermaidToPng;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, rest);
 		this.legacyMigrationVersion = legacyMigrationVersion ?? null;
 		if (this.legacyMigrationVersion !== LEGACY_MIGRATION_VERSION) {
@@ -134,7 +137,7 @@ export default class SyncConfluencePlugin extends Plugin {
 			// `getMarkdownFiles()` returns 0 at plugin onload on large vaults —
 			// Obsidian hasn't finished indexing yet. Run inline when the vault
 			// is already populated (small vaults), otherwise defer 5s (same
-			// window as `syncOnStartup`) so the vault has time to settle.
+			// window as `publishOnStartup`) so the vault has time to settle.
 			const files = this.app.vault.getMarkdownFiles();
 			if (files.length > 0) {
 				await this.runFrontmatterMigrations();
@@ -199,7 +202,7 @@ export default class SyncConfluencePlugin extends Plugin {
 		for (const inst of this.settings.instances) {
 			const tokenValue = await this.getApiTokenValueForInstance(inst.id);
 			const needsUsername = inst.authType === 'basic';
-			console.log('[Sync Confluence] auth debug', {
+			console.log('[Publish Confluence] auth debug', {
 				instanceId: inst.id,
 				baseUrl: inst.baseUrl,
 				authType: inst.authType,
@@ -219,7 +222,7 @@ export default class SyncConfluencePlugin extends Plugin {
 				username: inst.username,
 				apiToken: tokenValue,
 			});
-			const engine = new SyncEngine({
+			this.engines.set(inst.id, {
 				app: this.app,
 				settings: this.settings,
 				logger: this.logger,
@@ -227,18 +230,12 @@ export default class SyncConfluencePlugin extends Plugin {
 				instance: inst,
 				instances: this.settings.instances,
 			});
-			this.engines.set(inst.id, engine);
 		}
 	}
 
-	/** Called when settings change, such as rebuilding the renderer. */
-	async rebuildSyncEngine(): Promise<void> {
-		for (const engine of this.engines.values()) {
-			engine.rebuildRenderers();
-		}
-		if (this.engines.size === 0) {
-			await this.ensureEngines();
-		}
+	/** Called when settings change; rebuild each instance's publish context from current settings. */
+	async rebuildPublishEngine(): Promise<void> {
+		await this.ensureEngines();
 	}
 
 	/** Called when settings change token / baseUrl / username; forcibly rebuild the API and engine. */
@@ -246,24 +243,24 @@ export default class SyncConfluencePlugin extends Plugin {
 		await this.ensureEngines();
 	}
 
-	// =========== Sync entry points ==========
+	// =========== Publish entry points ==========
 
 	/**
 	 * Run a single instance's bound-note group and return its
-	 * `PerInstanceSyncResult`. Used by both syncAll and syncFolder — the
+	 * `PerInstancePublishResult`. Used by both publishAll and publishFolder — the
 	 * two flows differ only in how they build the group list, not in how
 	 * each group is processed.
 	 */
 	private async runInstanceGroup(
 		instance: ConfluenceInstance,
 		files: TFile[],
-	): Promise<PerInstanceSyncResult> {
-		const engine = this.engines.get(instance.id);
+	): Promise<PerInstancePublishResult> {
+		const engineDeps = this.engines.get(instance.id);
 		const baseResult = {
 			instanceName: instance.name,
 			instanceId: instance.id,
 		};
-		if (!engine) {
+		if (!engineDeps) {
 			return {
 				...baseResult,
 				total: files.length,
@@ -278,7 +275,7 @@ export default class SyncConfluencePlugin extends Plugin {
 				})),
 			};
 		}
-		const r = await engine.syncFiles(files);
+		const r = await publishFiles(engineDeps, files);
 		if (!r) {
 			return {
 				...baseResult,
@@ -304,7 +301,7 @@ export default class SyncConfluencePlugin extends Plugin {
 		};
 	}
 
-	async syncAll(): Promise<void> {
+	async publishAll(): Promise<void> {
 		await this.ensureEngines();
 		if (this.engines.size === 0) {
 			new Notice(t('notice.fillAuthFirst'));
@@ -316,12 +313,11 @@ export default class SyncConfluencePlugin extends Plugin {
 			ignorePatterns: this.settings.ignorePatterns,
 		});
 		if (files.length === 0) {
-			this.statusBar?.update(SyncStatus.Idle);
+			this.statusBar?.update(PublishStatus.Idle);
 			return;
 		}
-		this.statusBar?.showSyncing(t('status.syncing'));
-		const resolver = new InstanceResolver({ instances: this.settings.instances });
-		const { groups, unmatched } = resolver.groupByInstance(files, this.app, this.settings.frontmatterKey);
+		this.statusBar?.showPublishing(t('status.publishing'));
+		const { groups, unmatched } = groupByInstance(this.settings.instances, files, this.app, this.settings.frontmatterKey);
 
 		const result: MultiInstanceBatchResult = {
 			instances: [],
@@ -352,14 +348,14 @@ export default class SyncConfluencePlugin extends Plugin {
 		this.showMultiInstanceResult(result);
 	}
 
-	async syncCurrentFile(): Promise<void> {
+	async publishCurrentFile(): Promise<void> {
 		const file = this.app.workspace.getActiveFile();
 		if (!file) { new Notice(t('notice.noteNotOpen')); return; }
-		await this.syncFile(file);
+		await this.publishFile(file);
 	}
 
-	/** Sync all bound notes under the specified folder (recursive). */
-	async syncFolder(folder: TFolder): Promise<void> {
+	/** Publish all bound notes under the specified folder (recursive). */
+	async publishFolder(folder: TFolder): Promise<void> {
 		await this.ensureEngines();
 		if (this.engines.size === 0) {
 			new Notice(t('notice.fillAuthFirst'));
@@ -370,10 +366,9 @@ export default class SyncConfluencePlugin extends Plugin {
 			new Notice(t('notice.folderNoBoundNotes', { folder: folder.name }));
 			return;
 		}
-		this.statusBar?.showSyncing(folder.name + '/');
-		this.logger.info(`Sync folder ${folder.path}: ${files.length} bound notes`);
-		const resolver = new InstanceResolver({ instances: this.settings.instances });
-		const { groups, unmatched } = resolver.groupByInstance(files, this.app, this.settings.frontmatterKey);
+		this.statusBar?.showPublishing(folder.name + '/');
+		this.logger.info(`Publish folder ${folder.path}: ${files.length} bound notes`);
+		const { groups, unmatched } = groupByInstance(this.settings.instances, files, this.app, this.settings.frontmatterKey);
 
 		const result: MultiInstanceBatchResult = {
 			instances: [],
@@ -403,7 +398,7 @@ export default class SyncConfluencePlugin extends Plugin {
 		this.showMultiInstanceResult(result, folder.name + '/');
 	}
 
-	async syncFile(file: TFile): Promise<void> {
+	async publishFile(file: TFile): Promise<void> {
 		if (!this.fileIsBound(file)) {
 			new Notice(t('notice.noteNotBound'));
 			return;
@@ -413,19 +408,18 @@ export default class SyncConfluencePlugin extends Plugin {
 			new Notice(t('notice.fillAuthFirst'));
 			return;
 		}
-		this.statusBar?.showSyncing(t('status.syncing'));
-		const resolver = new InstanceResolver({ instances: this.settings.instances });
+		this.statusBar?.showPublishing(t('status.publishing'));
 
-		// Multi-target files may span instances — route to every matched engine,
-		// not just the first. Each engine independently filters binding.targets
-		// to the subset it owns (see SyncEngine.targetBelongsToInstance).
-		const { groups } = resolver.groupByInstance([file], this.app, this.settings.frontmatterKey);
+		// Multi-target files may span instances — route to every matched instance,
+		// not just the first. Each publish run independently filters binding.targets
+		// to the subset that instance owns.
+		const { groups } = groupByInstance(this.settings.instances, [file], this.app, this.settings.frontmatterKey);
 		const matchedInstances = new Map<string, ConfluenceInstance>();
 		for (const group of groups.values()) {
 			matchedInstances.set(group.instance.id, group.instance);
 		}
 		if (matchedInstances.size === 0) {
-			this.statusBar?.update(SyncStatus.Idle);
+			this.statusBar?.update(PublishStatus.Idle);
 			new Notice(t('notice.unmatchedUrl', { url: this.getFileUrl(file) }));
 			return;
 		}
@@ -439,8 +433,8 @@ export default class SyncConfluencePlugin extends Plugin {
 			unmatched: [],
 		};
 		for (const inst of matchedInstances.values()) {
-			const engine = this.engines.get(inst.id);
-			if (!engine) {
+			const engineDeps = this.engines.get(inst.id);
+			if (!engineDeps) {
 				result.instances.push({
 					instanceName: inst.name,
 					instanceId: inst.id,
@@ -459,7 +453,7 @@ export default class SyncConfluencePlugin extends Plugin {
 				result.failed += 1;
 				continue;
 			}
-			const r = await engine.syncOne(file);
+			const r = await publishOne(engineDeps, file);
 			if (!r) {
 				result.instances.push({
 					instanceName: inst.name,
@@ -502,7 +496,7 @@ export default class SyncConfluencePlugin extends Plugin {
 
 	private showMultiInstanceResult(result: MultiInstanceBatchResult, title?: string): void {
 		const anyFailed = result.failed > 0 || result.unmatched.length > 0;
-		// all-failed = nothing was successfully synced or skipped. Previously we
+		// all-failed = nothing was successfully published or skipped. Previously we
 		// required `instances.length > 0`, which mis-classified the case where
 		// every scanned note landed in `unmatched` (instances empty, but still
 		// wholly failed).
@@ -524,12 +518,12 @@ export default class SyncConfluencePlugin extends Plugin {
 				this.statusBar?.showPartial(summary);
 			}
 			if (this.settings.showNotice) {
-				const noticeKey = allFailed ? 'notice.syncFailed' : 'notice.syncPartialFail';
+				const noticeKey = allFailed ? 'notice.publishFailed' : 'notice.publishPartialFail';
 				new Notice(t(noticeKey, { summary }));
 			}
 		} else {
 			this.statusBar?.showSuccess(summary);
-			if (this.settings.showNotice) new Notice(t('notice.syncResult', { summary }));
+			if (this.settings.showNotice) new Notice(t('notice.publishResult', { summary }));
 		}
 	}
 
@@ -550,51 +544,21 @@ export default class SyncConfluencePlugin extends Plugin {
 
 	// =========== Scheduling ==========
 
-	restartSyncInterval(): void {
-		this.stopSyncInterval();
-		if (this.settings.syncInterval > 0) {
-			const ms = this.settings.syncInterval * 60 * 1000;
-			const id = window.setInterval(() => { void this.syncAll(); }, ms);
+	restartPublishInterval(): void {
+		this.stopPublishInterval();
+		if (this.settings.publishInterval > 0) {
+			const ms = this.settings.publishInterval * 60 * 1000;
+			const id = window.setInterval(() => { void this.publishAll(); }, ms);
 			this.registerInterval(id);
-			this.syncIntervalToken = id;
-			this.logger.info(`Scheduled sync started, interval ${this.settings.syncInterval} min`);
+			this.publishIntervalToken = id;
+			this.logger.info(`Scheduled publish started, interval ${this.settings.publishInterval} min`);
 		}
 	}
 
-	private stopSyncInterval(): void {
-		if (this.syncIntervalToken !== null) {
-			window.clearInterval(this.syncIntervalToken);
-			this.syncIntervalToken = null;
-		}
-	}
-
-	// =========== Template ===========
-
-	/** Write confluence-note.md to the template directory. force=true overwrites it. */
-	async installTemplateFile(force: boolean): Promise<boolean> {
-		try {
-			const folder = normalizePath(this.settings.templateFolderPath || 'templates');
-			await this.ensureFolder(folder);
-			const fullPath = folder + '/' + TEMPLATE_FILENAME;
-			const existing = this.app.vault.getAbstractFileByPath(fullPath);
-			const content = buildTemplateContent();
-			if (existing instanceof TFile) {
-				if (!force) return true;
-				await this.app.vault.modify(existing, content);
-			} else {
-				try {
-					await this.app.vault.create(fullPath, content);
-				} catch (e) {
-					const msg = e instanceof Error ? e.message : String(e);
-					if (/already exists/i.test(msg)) return true;
-					throw e;
-				}
-			}
-			this.logger.info(`Template written: ${fullPath}`);
-			return true;
-		} catch (e) {
-			this.logger.error('Failed to write template', e instanceof Error ? e.message : String(e));
-			return false;
+	private stopPublishInterval(): void {
+		if (this.publishIntervalToken !== null) {
+			window.clearInterval(this.publishIntervalToken);
+			this.publishIntervalToken = null;
 		}
 	}
 
@@ -625,26 +589,26 @@ export default class SyncConfluencePlugin extends Plugin {
 
 	private registerCommands(): void {
 		this.addCommand({
-			id: 'sync-all',
-			name: t('command.syncAll'),
-			callback: () => { void this.syncAll(); },
+			id: 'publish-all',
+			name: t('command.publishAll'),
+			callback: () => { void this.publishAll(); },
 		});
 		this.addCommand({
-			id: 'sync-current-file',
-			name: t('command.syncCurrent'),
+			id: 'publish-current-file',
+			name: t('command.publishCurrent'),
 			checkCallback: (checking) => {
 				const file = this.app.workspace.getActiveFile();
 				if (!file) return false;
-				if (!checking) void this.syncFile(file);
+				if (!checking) void this.publishFile(file);
 				return true;
 			},
 		});
 		this.addCommand({
-			id: 'insert-template',
-			name: t('command.insertTemplate'),
+			id: 'insert-frontmatter',
+			name: t('command.insertFrontmatter'),
 			editorCallback: async (_editor: Editor, view: MarkdownView) => {
 				if (!view.file) { new Notice(t('notice.noteNotOpen')); return; }
-				const ok = await insertTemplateFrontmatter(this.app, view.file, '', this.settings.frontmatterKey);
+				const ok = await insertBindingFrontmatter(this.app, view.file, '', this.settings.frontmatterKey);
 				new Notice(ok ? t('notice.frontmatterInsertedShort') : t('notice.frontmatterAlreadyExists'));
 			},
 		});
@@ -658,8 +622,8 @@ export default class SyncConfluencePlugin extends Plugin {
 					this.settings.instances,
 					async (path, url) => {
 						await this.ensureFolder(parentOf(path));
-						const file = await this.app.vault.create(path, buildTemplateContent());
-						await insertTemplateFrontmatter(this.app, file, url, this.settings.frontmatterKey);
+						const file = await this.app.vault.create(path, buildNoteContent());
+						await insertBindingFrontmatter(this.app, file, url, this.settings.frontmatterKey);
 						await this.app.workspace.openLinkText(file.path, '', false);
 						return file;
 					},
@@ -713,49 +677,49 @@ export default class SyncConfluencePlugin extends Plugin {
 	}
 
 	private registerMenuIntegrations(): void {
-		// Editor context menu: bound → sync; unbound → insert frontmatter
+		// Editor context menu: bound → publish; unbound → insert frontmatter
 		this.registerEvent(this.app.workspace.on('editor-menu', (menu: Menu, _editor: Editor, view: MarkdownView) => {
 			const file = view.file;
 			if (!file || file.extension !== 'md') return;
 			if (this.fileIsBound(file)) {
 				menu.addItem((item) => item
-					.setTitle(t('menu.syncToConfluence'))
+					.setTitle(t('menu.publishToConfluence'))
 					.setIcon('cloud-upload')
-					.onClick(() => { void this.syncFile(file); }));
+					.onClick(() => { void this.publishFile(file); }));
 			} else {
 				menu.addItem((item) => item
 					.setTitle(t('menu.insertFrontmatter'))
 					.setIcon('cloud')
 					.onClick(async () => {
-							const ok = await insertTemplateFrontmatter(this.app, file, '', this.settings.frontmatterKey);
+							const ok = await insertBindingFrontmatter(this.app, file, '', this.settings.frontmatterKey);
 						new Notice(ok ? t('notice.frontmatterInserted') : t('notice.frontmatterAlreadyExists'));
 					}));
 			}
 		}));
 
-		// File tree context menu: file → same rule; folder → sync all bound notes underneath
+		// File tree context menu: file → same rule; folder → publish all bound notes underneath
 		this.registerEvent(this.app.workspace.on('file-menu', (menu: Menu, fileOrFolder) => {
 			if (fileOrFolder instanceof TFolder) {
 				if (!this.folderHasBoundFile(fileOrFolder)) return;
 				menu.addItem((item) => item
-					.setTitle(t('menu.syncFolder'))
+					.setTitle(t('menu.publishFolder'))
 					.setIcon('cloud-upload')
-					.onClick(() => { void this.syncFolder(fileOrFolder); }));
+					.onClick(() => { void this.publishFolder(fileOrFolder); }));
 				return;
 			}
 			if (!(fileOrFolder instanceof TFile) || fileOrFolder.extension !== 'md') return;
 			const file = fileOrFolder;
 			if (this.fileIsBound(file)) {
 				menu.addItem((item) => item
-					.setTitle(t('menu.syncToConfluence'))
+					.setTitle(t('menu.publishToConfluence'))
 					.setIcon('cloud-upload')
-					.onClick(() => { void this.syncFile(file); }));
+					.onClick(() => { void this.publishFile(file); }));
 			} else {
 				menu.addItem((item) => item
 					.setTitle(t('menu.insertFrontmatter'))
 					.setIcon('cloud')
 					.onClick(async () => {
-							const ok = await insertTemplateFrontmatter(this.app, file, '', this.settings.frontmatterKey);
+							const ok = await insertBindingFrontmatter(this.app, file, '', this.settings.frontmatterKey);
 						new Notice(ok ? t('notice.frontmatterInsertedFileMenu') : t('notice.frontmatterAlreadyExists'));
 					}));
 			}
@@ -768,10 +732,8 @@ export default class SyncConfluencePlugin extends Plugin {
 	 */
 	async exportStoragePreview(file: TFile): Promise<void> {
 		try {
-			const converter = new MarkdownConverter(this.app);
 			const markdown = await this.app.vault.cachedRead(file);
-			const mermaidExt: 'svg' | 'png' = this.settings.mermaidRenderer === 'obsidian' ? 'svg' : 'png';
-			const refs = await converter.extractReferences(markdown, file.path, { mermaidExt });
+			const refs = await extractReferences(this.app, markdown, file.path);
 			// `stripSupplementaryChars` is per-instance. For the preview we pick
 			// the instance whose baseUrl matches the note's confluence_url —
 			// that's the one that would actually consume the output. Fall back
@@ -779,18 +741,15 @@ export default class SyncConfluencePlugin extends Plugin {
 			// no instances yet.
 			const fm = (this.app.metadataCache.getFileCache(file)?.frontmatter ?? {}) as Frontmatter;
 			const fallbackUrl = extractFirstTargetUrl(fm, this.settings.frontmatterKey);
-			const resolver = new InstanceResolver({ instances: this.settings.instances });
 			const matchedInst = this.settings.instances.length > 0
-				? (resolver.resolve(fallbackUrl) ?? this.settings.instances[0]!)
+				? (resolveInstance(this.settings.instances, fallbackUrl) ?? this.settings.instances[0]!)
 				: null;
-			const xhtml = await converter.convert(markdown, file.path, {
+			const xhtml = await convertMarkdown(this.app, markdown, file.path, {
 				attachedFilenames: new Set(refs.attachments.map((r) => r.filename)),
 				mermaidFilenameByHash: new Map(refs.mermaid.map((b) => [b.hash, b.filename])),
-				plantUmlFilenameByHash: new Map(refs.plantUml.map((b) => [b.hash, b.filename])),
 				drawioFilenameByHash: new Map(refs.drawio.map((b) => [b.hash, b.filename])),
 				drawioFilenameByPath: new Map(refs.drawio.filter((b) => b.sourcePath).map((b) => [b.sourcePath!, b.filename])),
-				renderMermaidToPng: this.settings.renderMermaidToPng,
-				renderPlantUmlToPng: this.settings.renderPlantUmlToPng,
+				renderMermaidToSvg: this.settings.renderMermaidToSvg,
 				renderDrawioToSvg: this.settings.renderDrawioToSvg,
 				defaultImageWidthPx: this.settings.defaultImageWidthPx,
 				stripSupplementaryChars: matchedInst?.stripSupplementaryChars ?? false,

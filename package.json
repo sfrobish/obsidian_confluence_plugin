@@ -1,7 +1,7 @@
 {
 	"name": "obsidian_confluence_plugin",
 	"version": "0.1.0",
-	"description": "Periodically sync Obsidian notes to the corresponding Confluence pages via the confluence_url binding in frontmatter",
+	"description": "Periodically publish Obsidian notes to the corresponding Confluence pages via the confluence_url binding in frontmatter",
 	"main": "dist/main.js",
 	"type": "module",
 	"scripts": {
@@ -12,7 +12,7 @@
 	"keywords": [
 		"obsidian",
 		"confluence",
-		"sync"
+		"publish"
 	],
 	"license": "MIT",
 	"author": "sfrobish",

@@ -1,21 +1,21 @@
 # obsidian_confluence_plugin
 
-## Getting started with Confluence sync
+## Getting started with Confluence publish
 
-This plugin syncs Obsidian notes to Confluence by reading a small amount of frontmatter on the note and then creating or updating the matching page in Confluence.
+This plugin publishes Obsidian notes to Confluence by reading a small amount of frontmatter on the note and then creating or updating the matching page in Confluence.
 
 The key idea is:
 
 1. configure which Obsidian folders are scanned
-2. make sure each note you want synced is in those scanned folders
+2. make sure each note you want published is in those scanned folders
 3. give the note a Confluence target or parent mapping
-4. run the sync
+4. run the publish
 
 ---
 
 ## 1) Configure which folders are scanned
 
-In the plugin settings, set the scanned folders list to one or more vault folders that should participate in sync.
+In the plugin settings, set the scanned folders list to one or more vault folders that should participate in publish.
 
 Examples:
 
@@ -23,7 +23,7 @@ Examples:
 - `Knowledge/Base`
 - `Projects/Team`
 
-If you leave the scan list empty or restrict it too narrowly, notes outside those folders will not be considered for sync.
+If you leave the scan list empty or restrict it too narrowly, notes outside those folders will not be considered for publish.
 
 Any markdown file in a scanned folder can participate, as long as it has the required Confluence binding metadata.
 
@@ -58,7 +58,7 @@ If a note is outside the scanned folders, it will be ignored even if it has Conf
 
 ## 3) Bind a note to Confluence
 
-Each note you want synced should include frontmatter such as:
+Each note you want published should include frontmatter such as:
 
 ```yaml
 ---
@@ -69,7 +69,7 @@ confluence_parent_url: "https://your-company.atlassian.net/wiki/spaces/ENG/pages
 
 Or, if the note has not been created in Confluence yet, you can rely on a parent mapping and let the plugin create the page for you.
 
-The plugin will treat the note as a sync target when it sees at least one binding field in frontmatter.
+The plugin will treat the note as a publish target when it sees at least one binding field in frontmatter.
 
 ---
 
@@ -118,7 +118,7 @@ Once the note is inside a scanned folder and has valid Confluence metadata:
 - updates the page content if it already exists
 - writes the resulting Confluence page ID and URL back into frontmatter
 
-After a successful sync, the note becomes bound to its Confluence page and future syncs will update the same page instead of creating duplicates.
+After a successful publish, the note becomes bound to its Confluence page and future publishes will update the same page instead of creating duplicates.
 
 ---
 
@@ -129,7 +129,7 @@ A practical setup is:
 1. add a folder like `Projects/Alpha` to the scan list
 2. create `Projects/Alpha/_index.md` and set its Confluence page ID or URL
 3. add or move notes into that folder
-4. run sync
+4. run publish
 5. confirm each note gets created under the corresponding Confluence parent page
 
 This gives you a simple “vault folder → Confluence hierarchy” mapping.

@@ -1,28 +1,24 @@
 import { App, Notice, PluginSettingTab, Setting } from 'obsidian';
 import * as obsidianModule from 'obsidian';
-import type SyncConfluencePlugin from './main';
+import type PublishConfluencePlugin from './main';
 import { ConfluenceApi, ConfluenceAuthType } from './confluence/api';
 import { t } from './i18n';
 import { ConfluenceInstance } from './types';
 
-export interface SyncConfluenceSettings {
+export interface PublishConfluenceSettings {
 	// ========== Multi-instance configuration ==========
 	instances: ConfluenceInstance[];
 
 	// ========== Scheduling ==========
-	/** Minutes; 0 disables scheduled sync */
-	syncInterval: number;
-	syncOnStartup: boolean;
+	/** Minutes; 0 disables scheduled publish */
+	publishInterval: number;
+	publishOnStartup: boolean;
 
 	// ========== Scan scope ==========
 	/** Only scan these directories (relative to vault root); empty array = the full vault */
 	scanFolders: string[];
 	/** List of glob patterns; matching files are skipped */
 	ignorePatterns: string[];
-
-	// ========== Templates ==========
-	templateFolderPath: string;
-	autoInstallTemplate: boolean;
 
 	// ========== Behavior ==========
 	showStatusBar: boolean;
@@ -36,28 +32,20 @@ export interface SyncConfluenceSettings {
 	defaultImageWidthPx: number;
 
 	// ========== Diagram rendering ==========
-	renderMermaidToPng: boolean;
-	/** kroki = use an external HTTP service to render PNG; obsidian = use Obsidian's built-in mermaid engine to render SVG */
-	mermaidRenderer: 'kroki' | 'obsidian';
-	mermaidRenderUrl: string;
-	renderPlantUmlToPng: boolean;
-	plantUmlServerUrl: string;
+	renderMermaidToSvg: boolean;
 	renderDrawioToSvg: boolean;
 }
 
-export const DEFAULT_SETTINGS: SyncConfluenceSettings = {
+export const DEFAULT_SETTINGS: PublishConfluenceSettings = {
 	instances: [],
 
-	syncInterval: 30,
-	syncOnStartup: false,
+	publishInterval: 30,
+	publishOnStartup: false,
 
 	scanFolders: [],
 	// Note: the Obsidian config directory (default .obsidian, user-customizable) is implicitly ignored by scanBoundNotes,
 	// so we only list the common extra ignore items users typically need.
-	ignorePatterns: ['.trash/**', 'templates/**'],
-
-	templateFolderPath: 'templates',
-	autoInstallTemplate: true,
+	ignorePatterns: ['.trash/**'],
 
 	showStatusBar: true,
 	showNotice: true,
@@ -67,19 +55,15 @@ export const DEFAULT_SETTINGS: SyncConfluenceSettings = {
 	maxAttachmentSizeMB: 10,
 	defaultImageWidthPx: 192,
 
-	renderMermaidToPng: true,
-	mermaidRenderer: 'kroki',
-	mermaidRenderUrl: 'https://kroki.io/mermaid/png',
-	renderPlantUmlToPng: false,
-	plantUmlServerUrl: 'https://www.plantuml.com/plantuml',
+	renderMermaidToSvg: true,
 	renderDrawioToSvg: true,
 };
 
-export class SyncConfluenceSettingTab extends PluginSettingTab {
-	plugin: SyncConfluencePlugin;
+export class PublishConfluenceSettingTab extends PluginSettingTab {
+	plugin: PublishConfluencePlugin;
 	private authResultEls: Map<string, HTMLElement> = new Map();
 
-	constructor(app: App, plugin: SyncConfluencePlugin) {
+	constructor(app: App, plugin: PublishConfluencePlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
@@ -117,32 +101,32 @@ export class SyncConfluenceSettingTab extends PluginSettingTab {
 					}));
 		});
 
-		// ===== Sync scheduling =====
+		// ===== Publish scheduling =====
 		this.renderSection(containerEl, t('settings.section.schedule'), (el) => {
 			new Setting(el)
 				.setName(t('settings.interval.name'))
 				.setDesc(t('settings.interval.desc'))
 				.addText((tx) => tx
 					.setPlaceholder('30')
-					.setValue(String(s.syncInterval))
+					.setValue(String(s.publishInterval))
 					.onChange(async (v) => {
 						const n = parseInt(v, 10);
-						s.syncInterval = isNaN(n) || n < 0 ? 0 : n;
+						s.publishInterval = isNaN(n) || n < 0 ? 0 : n;
 						await this.plugin.saveSettings();
-						this.plugin.restartSyncInterval();
+						this.plugin.restartPublishInterval();
 					}));
 
 			new Setting(el)
-				.setName(t('settings.syncOnStartup.name'))
-				.setDesc(t('settings.syncOnStartup.desc'))
-				.addToggle((tx) => tx.setValue(s.syncOnStartup).onChange(async (v) => {
-					s.syncOnStartup = v;
+				.setName(t('settings.publishOnStartup.name'))
+				.setDesc(t('settings.publishOnStartup.desc'))
+				.addToggle((tx) => tx.setValue(s.publishOnStartup).onChange(async (v) => {
+					s.publishOnStartup = v;
 					await this.plugin.saveSettings();
 				}));
 
 			new Setting(el)
-				.addButton((btn) => btn.setButtonText(t('settings.syncNow')).setCta().onClick(async () => {
-					await this.plugin.syncAll();
+				.addButton((btn) => btn.setButtonText(t('settings.publishNow')).setCta().onClick(async () => {
+					await this.plugin.publishAll();
 				}));
 		});
 
@@ -152,7 +136,7 @@ export class SyncConfluenceSettingTab extends PluginSettingTab {
 				.setName(t('settings.scanFolders.name'))
 				.setDesc(t('settings.scanFolders.desc'))
 				.then((setting) => {
-					const ta = setting.controlEl.createEl('textarea', { cls: 'sync-confluence-textarea' });
+					const ta = setting.controlEl.createEl('textarea', { cls: 'publish-confluence-textarea' });
 					ta.value = s.scanFolders.join('\n');
 					ta.addEventListener('change', () => {
 						s.scanFolders = ta.value.split('\n').map((x) => x.trim()).filter(Boolean);
@@ -164,41 +148,13 @@ export class SyncConfluenceSettingTab extends PluginSettingTab {
 				.setName(t('settings.ignore.name'))
 				.setDesc(t('settings.ignore.desc'))
 				.then((setting) => {
-					const ta = setting.controlEl.createEl('textarea', { cls: 'sync-confluence-textarea' });
+					const ta = setting.controlEl.createEl('textarea', { cls: 'publish-confluence-textarea' });
 					ta.value = s.ignorePatterns.join('\n');
 					ta.addEventListener('change', () => {
 						s.ignorePatterns = ta.value.split('\n').map((x) => x.trim()).filter(Boolean);
 						void this.plugin.saveSettings();
 					});
 				});
-		});
-
-		// ===== Templates =====
-		this.renderSection(containerEl, t('settings.section.template'), (el) => {
-			new Setting(el)
-				.setName(t('settings.templateFolder.name'))
-				.setDesc(t('settings.templateFolder.desc'))
-				.addText((tx) => tx
-					.setPlaceholder('templates')
-					.setValue(s.templateFolderPath)
-					.onChange(async (v) => {
-						s.templateFolderPath = v.trim() || 'templates';
-						await this.plugin.saveSettings();
-					}));
-
-			new Setting(el)
-				.setName(t('settings.autoInstallTemplate.name'))
-				.setDesc(t('settings.autoInstallTemplate.desc'))
-				.addToggle((tx) => tx.setValue(s.autoInstallTemplate).onChange(async (v) => {
-					s.autoInstallTemplate = v;
-					await this.plugin.saveSettings();
-				}));
-
-			new Setting(el)
-				.addButton((btn) => btn.setButtonText(t('settings.writeTemplateNow')).onClick(async () => {
-					const ok = await this.plugin.installTemplateFile(true);
-					new Notice(ok ? t('notice.templateWritten') : t('notice.templateWriteFailed'));
-				}));
 		});
 
 		// ===== Attachments =====
@@ -248,79 +204,19 @@ export class SyncConfluenceSettingTab extends PluginSettingTab {
 				.addToggle((tx) => tx.setValue(s.renderDrawioToSvg).onChange(async (v) => {
 					s.renderDrawioToSvg = v;
 					await this.plugin.saveSettings();
-					void this.plugin.rebuildSyncEngine();
+					void this.plugin.rebuildPublishEngine();
 					this.display();
 				}));
 
 			new Setting(el)
 				.setName(t('settings.mermaid.toggleName'))
 				.setDesc(t('settings.mermaid.toggleDesc'))
-				.addToggle((tx) => tx.setValue(s.renderMermaidToPng).onChange(async (v) => {
-					s.renderMermaidToPng = v;
+				.addToggle((tx) => tx.setValue(s.renderMermaidToSvg).onChange(async (v) => {
+					s.renderMermaidToSvg = v;
 					await this.plugin.saveSettings();
-					void this.plugin.rebuildSyncEngine();
+					void this.plugin.rebuildPublishEngine();
 					this.display();
 				}));
-
-			if (s.renderMermaidToPng) {
-				new Setting(el)
-					.setName(t('settings.mermaid.rendererName'))
-					.setDesc(t('settings.mermaid.rendererDesc'))
-					.addDropdown((d) => d
-						.addOption('kroki', t('settings.mermaid.rendererKroki'))
-						.addOption('obsidian', t('settings.mermaid.rendererObsidian'))
-						.setValue(s.mermaidRenderer)
-						.onChange(async (v) => {
-							s.mermaidRenderer = (v === 'obsidian' ? 'obsidian' : 'kroki');
-							await this.plugin.saveSettings();
-							void this.plugin.rebuildSyncEngine();
-							this.display();
-						}));
-
-				const rendererHint = el.createEl('div', { cls: 'sync-confluence-renderer-hint setting-item-description' });
-				if (s.mermaidRenderer === 'kroki') {
-					rendererHint.createEl('p', { text: t('settings.mermaid.krokiPros') });
-					rendererHint.createEl('p', { text: t('settings.mermaid.krokiCons') });
-				} else {
-					rendererHint.createEl('p', { text: t('settings.mermaid.obsidianPros') });
-					rendererHint.createEl('p', { text: t('settings.mermaid.obsidianCons') });
-				}
-
-				if (s.mermaidRenderer === 'kroki') {
-					new Setting(el)
-						.setName(t('settings.mermaid.urlName'))
-						.setDesc(t('settings.mermaid.urlDesc'))
-						.addText((tx) => tx
-							.setPlaceholder('https://kroki.io/mermaid/png')
-							.setValue(s.mermaidRenderUrl)
-							.onChange(async (v) => {
-								s.mermaidRenderUrl = v.trim() || DEFAULT_SETTINGS.mermaidRenderUrl;
-								await this.plugin.saveSettings();
-								void this.plugin.rebuildSyncEngine();
-							}));
-				}
-			}
-
-			new Setting(el)
-				.setName(t('settings.plantuml.toggleName'))
-				.setDesc(t('settings.plantuml.toggleDesc'))
-				.addToggle((tx) => tx.setValue(s.renderPlantUmlToPng).onChange(async (v) => {
-					s.renderPlantUmlToPng = v;
-					await this.plugin.saveSettings();
-					void this.plugin.rebuildSyncEngine();
-				}));
-
-			new Setting(el)
-				.setName(t('settings.plantuml.urlName'))
-				.setDesc(t('settings.plantuml.urlDesc'))
-				.addText((tx) => tx
-					.setPlaceholder('https://www.plantuml.com/plantuml')
-					.setValue(s.plantUmlServerUrl)
-					.onChange(async (v) => {
-						s.plantUmlServerUrl = v.trim() || DEFAULT_SETTINGS.plantUmlServerUrl;
-						await this.plugin.saveSettings();
-						void this.plugin.rebuildSyncEngine();
-					}));
 		});
 
 		// ===== UI behavior =====
@@ -355,7 +251,7 @@ export class SyncConfluenceSettingTab extends PluginSettingTab {
 	}
 
 	private renderSection(parent: HTMLElement, title: string, build: (el: HTMLElement) => void): void {
-		const section = parent.createDiv({ cls: 'sync-confluence-section' });
+		const section = parent.createDiv({ cls: 'publish-confluence-section' });
 		new Setting(section).setName(title).setHeading();
 		build(section);
 	}
@@ -396,7 +292,7 @@ export class SyncConfluenceSettingTab extends PluginSettingTab {
 		} else {
 		// Fallback for older Obsidian versions where SecretComponent is not
 		// available: accept a freshly entered token and copy its value into
-		// the derived `sync-confluence-token-<instId>` key. Saving on every
+		// the derived `publish-confluence-token-<instId>` key. Saving on every
 		// keystroke would issue one `setSecret` + `saveSettings` + engine
 		// rebuild per character; debounce so paste-style entry is a single
 		// write, and ensure a final flush on blur.
@@ -406,7 +302,7 @@ export class SyncConfluenceSettingTab extends PluginSettingTab {
 			const flush = async (raw: string): Promise<void> => {
 				const trimmed = raw.trim();
 				if (!trimmed) return;
-				const key = `sync-confluence-token-${inst.id}`;
+				const key = `publish-confluence-token-${inst.id}`;
 				const storage = (this.app as unknown as { secretStorage?: { setSecret?(key: string, value: string): unknown } }).secretStorage;
 				if (storage && typeof storage.setSecret === 'function') {
 					try {
@@ -445,12 +341,12 @@ export class SyncConfluenceSettingTab extends PluginSettingTab {
 
 		// Show which key is currently selected for the instance.
 		if (inst.apiToken) {
-			const saved = parent.createDiv({ cls: 'sync-confluence-instance-token-saved' });
+			const saved = parent.createDiv({ cls: 'publish-confluence-instance-token-saved' });
 			saved.setText(t('settings.token.savedLabel', { key: inst.apiToken }));
 		}
 
-		const hint = parent.createDiv({ cls: 'sync-confluence-keyvault-hint' });
-		hint.createEl('span', { text: t('settings.token.hintLabel'), cls: 'sync-confluence-keyvault-hint-label' });
+		const hint = parent.createDiv({ cls: 'publish-confluence-keyvault-hint' });
+		hint.createEl('span', { text: t('settings.token.hintLabel'), cls: 'publish-confluence-keyvault-hint-label' });
 		hint.createSpan({ text: t('settings.token.hintBody') });
 	}
 
@@ -505,7 +401,7 @@ export class SyncConfluenceSettingTab extends PluginSettingTab {
 	}
 
 	private renderInstanceCard(parent: HTMLElement, inst: ConfluenceInstance, idx: number): void {
-		const card = parent.createDiv({ cls: 'sync-confluence-instance-card' });
+		const card = parent.createDiv({ cls: 'publish-confluence-instance-card' });
 		card.dataset.cardIndex = String(idx);
 		const isSingle = this.plugin.settings.instances.length <= 1;
 
@@ -536,14 +432,18 @@ export class SyncConfluenceSettingTab extends PluginSettingTab {
 			.addButton((btn) => btn.setIcon('trash').setTooltip(t('settings.instances.remove')).setDisabled(isSingle).onClick(async () => {
 				if (isSingle) return;
 				// Only delete the SecretStorage entry when this instance
-				// owns the key. Plugin-derived keys (`sync-confluence-token-<id>`)
+				// owns the key. Plugin-derived keys (`publish-confluence-token-<id>`)
 				// are unique per instance and safe to remove. User-picked
 				// keychain entries (SecretComponent selection) might be
 				// shared with another instance or used by an unrelated tool —
 				// never delete those, since we can't know what else relies on
 				// the same keychain entry.
-				const derivedKey = `sync-confluence-token-${inst.id}`;
-				if (inst.apiToken && inst.apiToken === derivedKey) {
+				const derivedKey = `publish-confluence-token-${inst.id}`;
+				// Instances created before the sync→publish rename still have
+				// apiToken set to the old `sync-confluence-token-<id>` derived
+				// key; recognize it too so upgrading doesn't orphan the secret.
+				const legacyDerivedKey = `sync-confluence-token-${inst.id}`;
+				if (inst.apiToken && (inst.apiToken === derivedKey || inst.apiToken === legacyDerivedKey)) {
 					const storage = (this.app as unknown as { secretStorage?: { deleteSecret?(key: string): unknown } }).secretStorage;
 					if (storage && typeof storage.deleteSecret === 'function') {
 						try {
@@ -634,13 +534,13 @@ export class SyncConfluenceSettingTab extends PluginSettingTab {
 				await this.runValidateAuthForInstance(inst);
 			}));
 
-		const resultEl = card.createDiv({ cls: 'sync-confluence-auth-result' });
+		const resultEl = card.createDiv({ cls: 'publish-confluence-auth-result' });
 		this.authResultEls.set(inst.id, resultEl);
 
 		// Legacy-confluence-server compatibility: replace emoji with [U+XXXX].
 		// Per-instance so users with a mixed fleet (Cloud + old-MySQL Server) can
 		// enable it only where needed. No engine rebuild required — the toggle
-		// is read fresh on every sync.
+		// is read fresh on every publish.
 		new Setting(card)
 			.setName(t('settings.stripSupplementary.name'))
 			.setDesc(t('settings.stripSupplementary.desc'))
@@ -650,7 +550,7 @@ export class SyncConfluenceSettingTab extends PluginSettingTab {
 			}));
 
 		// Uniqueness errors are updated in-place via updateDuplicateWarnings().
-		card.createDiv({ cls: 'sync-confluence-instance-dups' });
+		card.createDiv({ cls: 'publish-confluence-instance-dups' });
 		this.updateDuplicateWarnings(card, inst);
 	}
 
@@ -661,7 +561,7 @@ export class SyncConfluenceSettingTab extends PluginSettingTab {
 	 * as duplicates.
 	 */
 	private updateDuplicateWarnings(card: HTMLElement, inst: ConfluenceInstance): void {
-		const host = card.querySelector('.sync-confluence-instance-dups');
+		const host = card.querySelector('.publish-confluence-instance-dups');
 		if (!host) return;
 		host.replaceChildren();
 		const norm = (s: string) => s.trim().toLowerCase();
@@ -675,7 +575,7 @@ export class SyncConfluenceSettingTab extends PluginSettingTab {
 				return norm(other.baseUrl.replace(/\/+$/, '')) === norm(inst.baseUrl.replace(/\/+$/, ''));
 			},
 		);
-		if (nameDup) host.createDiv({ cls: 'sync-confluence-error', text: t('settings.instances.duplicateName') });
-		if (urlDup) host.createDiv({ cls: 'sync-confluence-error', text: t('settings.instances.duplicateBaseUrl') });
+		if (nameDup) host.createDiv({ cls: 'publish-confluence-error', text: t('settings.instances.duplicateName') });
+		if (urlDup) host.createDiv({ cls: 'publish-confluence-error', text: t('settings.instances.duplicateBaseUrl') });
 	}
 }

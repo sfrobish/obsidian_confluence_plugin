@@ -65,7 +65,7 @@ export function splitCsvUrls(raw: string): string[] {
  * `confluence_parent_url`, handling all three supported frontmatter formats
  * (scalar, CSV, array). Empty / non-string entries are skipped.
  *
- * Single source of truth — used by syncAll, syncFolder, syncFile, and the
+ * Single source of truth — used by publishAll, publishFolder, publishFile, and the
  * runInstanceGroup helper. Replaces three near-identical copies that
  * previously drifted apart.
  */

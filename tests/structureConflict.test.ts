@@ -1,27 +1,25 @@
 import { describe, expect, it } from 'bun:test';
-import { collectAncestorIndexPaths, shouldReplaceRemotePageOnConflict } from '../src/sync/structureConflict';
-import { MarkdownConverter } from '../src/confluence/markdownConverter';
+import { collectAncestorIndexPaths, shouldReplaceRemotePageOnConflict } from '../src/publish/structureConflict';
+import { extractReferences, convert } from '../src/confluence/convertMarkdown';
 
 (globalThis as any).window ??= { crypto: { subtle: crypto.subtle } };
 
 describe('markdown Mermaid fence conversion', () => {
 	it('replaces a fenced Mermaid block even when there is a blank line before the closing fence', async () => {
-		const converter = new MarkdownConverter({} as any);
+		const app = {} as any;
 		const md = '```mermaid\nflowchart TD\nA-->B\n\n```\n';
-		const refs = await converter.extractReferences(md, 'x.md', { mermaidExt: 'svg' });
+		const refs = await extractReferences(app, md, 'x.md');
 		const ctx = {
 			attachedFilenames: new Set<string>(),
 			mermaidFilenameByHash: new Map(refs.mermaid.map((b) => [b.hash, b.filename])),
-			plantUmlFilenameByHash: new Map(),
 			drawioFilenameByHash: new Map(),
 			drawioFilenameByPath: new Map(),
-			renderMermaidToPng: true,
-			renderPlantUmlToPng: false,
+			renderMermaidToSvg: true,
 			renderDrawioToSvg: false,
 			defaultImageWidthPx: 0,
 			stripSupplementaryChars: false,
 		};
-		const out = await converter.convert(md, 'x.md', ctx);
+		const out = await convert(app, md, 'x.md', ctx);
 		expect(out).toContain('<ac:image>');
 		expect(out).not.toContain('ac:name="code"');
 	});

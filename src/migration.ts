@@ -11,9 +11,9 @@
 
 import type { App, TFile } from 'obsidian';
 import * as yaml from 'js-yaml';
-import type { SyncConfluenceSettings } from './settings';
-import type { AttachmentRecord, PerInstanceUsernameMap, SyncTarget } from './types';
-import { InstanceResolver } from './sync/instanceResolver';
+import type { PublishConfluenceSettings } from './settings';
+import type { AttachmentRecord, ConfluenceInstance, PerInstanceUsernameMap, PublishTarget } from './types';
+import { resolveTargetInstance } from './publish/resolveInstances';
 import { readTargetsFromFrontmatter } from './frontmatter/handler';
 
 /**
@@ -189,7 +189,7 @@ function globToRegex(pattern: string): RegExp {
  * loud to be in logs).
  */
 export function migrateLegacySettings(
-	settings: SyncConfluenceSettings,
+	settings: PublishConfluenceSettings,
 	logger: MigrationLogger,
 ): boolean {
 	const raw = settings as unknown as Record<string, unknown>;
@@ -223,9 +223,9 @@ export function migrateLegacySettings(
 		username: legacyUsernameRaw.trim(),
 		// Preserve the legacy key name when one was set — the existing
 		// SecretStorage entry still works, no copy needed. The derived
-		// `sync-confluence-token-default` slot is only used when no legacy
+		// `publish-confluence-token-default` slot is only used when no legacy
 		// key existed (i.e. the user had no token stored yet).
-		apiToken: legacyKey || 'sync-confluence-token-default',
+		apiToken: legacyKey || 'publish-confluence-token-default',
 		stripSupplementaryChars: legacyStripSupplementary,
 	}];
 
@@ -257,7 +257,7 @@ export function migrateLegacySettings(
  *       pageId-bucketed form →
  *       `{ [instanceId]: { [pageId]: { filename: { hash, id } } } }`
  *
- * Per-target routing uses the same authoritative URL rule as the sync engine,
+ * Per-target routing uses the same authoritative URL rule as the publish engine,
  * preserving the index relationship between URL, pageId and attachment
  * bucket. Unmatched data falls back to the first configured instance id (or
  * `default` when none exists) so it is not discarded.
@@ -274,7 +274,7 @@ export function migrateLegacySettings(
  */
 export async function migrateLegacyFrontmatter(
 	app: App,
-	settings: SyncConfluenceSettings,
+	settings: PublishConfluenceSettings,
 	logger: MigrationLogger,
 ): Promise<number> {
 	const configDir = app.vault.configDir;
@@ -290,7 +290,6 @@ export async function migrateLegacyFrontmatter(
 		return true;
 	});
 
-	const resolver = new InstanceResolver({ instances: settings.instances });
 	const urlKey = settings.frontmatterKey || 'confluence_url';
 	logger.info(`migrateLegacyFrontmatter: starting — scanning ${allFiles.length} files via disk read, ${settings.instances.length} configured instance(s)`);
 	let found = 0;
@@ -313,7 +312,7 @@ export async function migrateLegacyFrontmatter(
 			const ok = await writeMigratedFrontmatter(
 				app,
 				file,
-				resolver,
+				settings.instances,
 				urlKey,
 				fallbackInstanceId,
 			);
@@ -336,7 +335,7 @@ export async function migrateLegacyFrontmatter(
 async function writeMigratedFrontmatter(
 	app: App,
 	file: TFile,
-	resolver: InstanceResolver,
+	instances: ConfluenceInstance[],
 	urlKey: string,
 	fallbackInstanceId: string,
 ): Promise<boolean> {
@@ -351,7 +350,7 @@ async function writeMigratedFrontmatter(
 		const targets = readTargetsFromFrontmatter(fmRaw, urlKey).targets;
 		const routes = targets.map((target) => ({
 			target,
-			instanceId: resolver.resolveTarget(target)?.id ?? fallbackInstanceId,
+			instanceId: resolveTargetInstance(instances, target)?.id ?? fallbackInstanceId,
 		}));
 		if (typeof fmRaw['confluence_last_hash'] === 'string') {
 			const hash = fmRaw['confluence_last_hash'] as string;
@@ -379,7 +378,7 @@ async function writeMigratedFrontmatter(
 
 function migrateAttachmentCache(
 	value: unknown,
-	routes: Array<{ target: SyncTarget; instanceId: string }>,
+	routes: Array<{ target: PublishTarget; instanceId: string }>,
 	fallbackInstanceId: string,
 ): Record<string, Record<string, Record<string, AttachmentRecord>>> {
 	const nested: Record<string, Record<string, Record<string, AttachmentRecord>>> = {};
@@ -467,7 +466,7 @@ function isLegacyPageAttachmentShape(
  */
 export async function migrateLegacyUsernames(
 	app: App,
-	settings: SyncConfluenceSettings,
+	settings: PublishConfluenceSettings,
 	logger: MigrationLogger,
 ): Promise<number> {
 	const configDir = app.vault.configDir;
