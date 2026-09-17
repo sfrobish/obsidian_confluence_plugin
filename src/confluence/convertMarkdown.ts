@@ -405,6 +405,21 @@ function preprocessObsidianSyntax(md: string, opts?: PreprocessOptions): string 
 		if (linkpath.includes('#')) {
 			return text || linkpath.split('/').pop() || linkpath;
 		}
+		// Whole-note embed (![[Note]] / ![[Note.md]], no extension or .md): Confluence has no image
+		// representation for this, so route it through the same page resolver as [[wikilinks]] and
+		// render Confluence's native Include Page macro instead of treating the note as an image attachment.
+		if (isNoteEmbed(linkpath)) {
+			const resolver = opts?.resolveWikilink;
+			const sourcePath = opts?.sourcePath;
+			if (resolver && sourcePath) {
+				const resolved = normalizeWikilinkResolution(resolver(linkpath, sourcePath));
+				if (resolved) {
+					const title = resolved.title ?? inferPageTitle(linkpath);
+					return makePageEmbedMarker(title);
+				}
+			}
+			return text || linkpath.split('/').pop() || linkpath;
+		}
 		return `![${text}](${encodeURI(linkpath)})`;
 	});
 
@@ -516,6 +531,22 @@ function normalizeWikilinkResolution(value: WikilinkResolution | null): Resolved
 function inferPageTitle(linkpath: string): string {
 	const filename = linkpath.split('/').pop() ?? linkpath;
 	return filename.replace(/\.md$/i, '');
+}
+
+/** True for Obsidian note embeds (extensionless or explicit .md) as opposed to image/binary embeds. */
+function isNoteEmbed(linkpath: string): boolean {
+	const base = linkpath.split('/').pop() ?? linkpath;
+	const dot = base.lastIndexOf('.');
+	if (dot < 0) return true;
+	return base.slice(dot + 1).toLowerCase() === 'md';
+}
+
+// Charset restricted to encodeURIComponent's output so the match stops at the marker's end
+// instead of greedily swallowing the rest of the rendered HTML (e.g. a trailing `</p>`).
+const PAGE_EMBED_RE = /PAGEEMBED:([A-Za-z0-9%_.!~*'()-]+)/g;
+
+function makePageEmbedMarker(title: string): string {
+	return `PAGEEMBED:${encodeURIComponent(title)}`;
 }
 
 const CODE_MASK_OPEN = '';
@@ -676,6 +707,11 @@ function postProcessHtml(html: string, ctx: ConvertContext): string {
 	// @[[Name]] mention sentinel → Confluence user link (embedded during preprocess to bypass markdown-it HTML escaping)
 	out = out.replace(/MENTION:([^]*)/g, (_full, username: string) => {
 		return `<ac:link><ri:user ri:username="${escapeAttr(username)}" /></ac:link>`;
+	});
+	// ![[Note]] whole-note embed sentinel → Confluence's native Include Page macro.
+	out = out.replace(PAGE_EMBED_RE, (_full, titlePart: string) => {
+		const title = tryDecode(titlePart);
+		return `<ac:structured-macro ac:name="include" ac:schema-version="1"><ac:parameter ac:name=""><ri:page ri:content-title="${escapeAttr(title)}" /></ac:parameter></ac:structured-macro>`;
 	});
 	// [[#Heading]] / [[note#Heading]] sentinel → Confluence native anchor links.
 	// Confluence heading anchors remove whitespace but preserve case and punctuation.
