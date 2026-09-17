@@ -711,7 +711,7 @@ function postProcessHtml(html: string, ctx: ConvertContext): string {
 	// ![[Note]] whole-note embed sentinel → Confluence's native Include Page macro.
 	out = out.replace(PAGE_EMBED_RE, (_full, titlePart: string) => {
 		const title = tryDecode(titlePart);
-		return `<ac:structured-macro ac:name="include" ac:schema-version="1"><ac:parameter ac:name=""><ri:page ri:content-title="${escapeAttr(title)}" /></ac:parameter></ac:structured-macro>`;
+		return `<ac:structured-macro ac:name="include" ac:schema-version="1"><ac:parameter ac:name=""><ac:link><ri:page ri:content-title="${escapeAttr(title)}" /></ac:link></ac:parameter></ac:structured-macro>`;
 	});
 	// [[#Heading]] / [[note#Heading]] sentinel → Confluence native anchor links.
 	// Confluence heading anchors remove whitespace but preserve case and punctuation.

@@ -20,7 +20,7 @@ describe('whole-note embed (![[Note]])', () => {
 		const ctx: ConvertContext = { ...baseCtx, resolveWikilink: () => ({ url: '/wiki/x', title: 'Other Note' }) };
 		const html = await convert(app, '![[Other Note]]', 'source.md', ctx);
 		expect(html).toContain('<ac:structured-macro ac:name="include"');
-		expect(html).toContain('ri:content-title="Other Note"');
+		expect(html).toContain('<ac:link><ri:page ri:content-title="Other Note" /></ac:link>');
 		expect(html).not.toContain('ac:image');
 	});
 
